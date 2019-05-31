@@ -92,7 +92,7 @@ class exx extends Exchange {
         ));
     }
 
-    public function fetch_markets () {
+    public function fetch_markets ($params = array ()) {
         $markets = $this->publicGetMarkets ();
         $ids = is_array ($markets) ? array_keys ($markets) : array ();
         $result = array ();
@@ -264,7 +264,7 @@ class exx extends Exchange {
         $cost = $this->safe_float($order, 'trade_money');
         $amount = $this->safe_float($order, 'total_amount');
         $filled = $this->safe_float($order, 'trade_amount', 0.0);
-        $remaining = $this->amount_to_precision($symbol, $amount - $filled);
+        $remaining = floatval ($this->amount_to_precision($symbol, $amount - $filled));
         $status = $this->safe_integer($order, 'status');
         if ($status === 1) {
             $status = 'canceled';
@@ -285,7 +285,7 @@ class exx extends Exchange {
             'datetime' => $this->iso8601 ($timestamp),
             'timestamp' => $timestamp,
             'lastTradeTimestamp' => null,
-            'status' => 'open',
+            'status' => $status,
             'symbol' => $symbol,
             'type' => 'limit',
             'side' => $order['type'],
@@ -303,7 +303,7 @@ class exx extends Exchange {
     public function create_order ($symbol, $type, $side, $amount, $price = null, $params = array ()) {
         $this->load_markets();
         $market = $this->market ($symbol);
-        $response = $this->privateGetGetOrder (array_merge (array (
+        $response = $this->privateGetOrder (array_merge (array (
             'currency' => $market['id'],
             'type' => $side,
             'price' => $price,
@@ -348,6 +348,9 @@ class exx extends Exchange {
         $orders = $this->privateGetGetOpenOrders (array_merge (array (
             'currency' => $market['id'],
         ), $params));
+        if (!gettype ($orders) === 'array' && count (array_filter (array_keys ($orders), 'is_string')) == 0) {
+            return array ();
+        }
         return $this->parse_orders($orders, $market, $since, $limit);
     }
 
@@ -366,8 +369,8 @@ class exx extends Exchange {
                 'accesskey' => $this->apiKey,
                 'nonce' => $this->nonce (),
             ), $params)));
-            $signature = $this->hmac ($this->encode ($query), $this->encode ($this->secret), 'sha512');
-            $url .= '?' . $query . '&$signature=' . $signature;
+            $signed = $this->hmac ($this->encode ($query), $this->encode ($this->secret), 'sha512');
+            $url .= '?' . $query . '&signature=' . $signed;
             $headers = array (
                 'Content-Type' => 'application/x-www-form-urlencoded',
             );
@@ -375,13 +378,12 @@ class exx extends Exchange {
         return array ( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($httpCode, $reason, $url, $method, $headers, $body) {
+    public function handle_errors ($httpCode, $reason, $url, $method, $headers, $body, $response) {
         if (gettype ($body) !== 'string')
             return; // fallback to default error handler
         if (strlen ($body) < 2)
             return; // fallback to default error handler
         if (($body[0] === '{') || ($body[0] === '[')) {
-            $response = json_decode ($body, $as_associative_array = true);
             //
             //  array ("$result":false,"$message":"服务端忙碌")
             //  ... and other formats
@@ -395,8 +397,13 @@ class exx extends Exchange {
                 $exceptions = $this->exceptions;
                 if (is_array ($exceptions) && array_key_exists ($code, $exceptions)) {
                     throw new $exceptions[$code] ($feedback);
+                } else if ($code === '308') {
+                    // this is returned by the exchange when there are no open orders
+                    // array ("$code":308,"$message":"Not Found Transaction Record")
+                    return;
+                } else {
+                    throw new ExchangeError ($feedback);
                 }
-                throw new ExchangeError ($feedback);
             }
             $result = $this->safe_value($response, 'result');
             if ($result !== null) {

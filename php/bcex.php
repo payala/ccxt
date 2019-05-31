@@ -33,8 +33,8 @@ class bcex extends Exchange {
                 'logo' => 'https://user-images.githubusercontent.com/1294454/43362240-21c26622-92ee-11e8-9464-5801ec526d77.jpg',
                 'api' => 'https://www.bcex.top',
                 'www' => 'https://www.bcex.top',
-                'doc' => 'https://www.bcex.top/api_market/market/',
-                'fees' => 'http://bcex.udesk.cn/hc/articles/57085',
+                'doc' => 'https://github.com/BCEX-TECHNOLOGY-LIMITED/API_Docs/wiki/Interface',
+                'fees' => 'https://bcex.udesk.cn/hc/articles/57085',
                 'referral' => 'https://www.bcex.top/user/reg/type/2/pid/758978',
             ),
             'api' => array (
@@ -286,7 +286,7 @@ class bcex extends Exchange {
         );
     }
 
-    public function fetch_markets () {
+    public function fetch_markets ($params = array ()) {
         $response = $this->publicGetApiMarketGetPriceList ();
         $result = array ();
         $keys = is_array ($response) ? array_keys ($response) : array ();
@@ -359,7 +359,9 @@ class bcex extends Exchange {
                 $cost = $amount * $price;
             }
         }
-        $side = $this->safe_string($trade, 'type');
+        $side = $this->safe_string($trade, 'side');
+        if ($side === 'sale')
+            $side = 'sell';
         return array (
             'info' => $trade,
             'id' => $id,
@@ -497,7 +499,7 @@ class bcex extends Exchange {
 
     public function fetch_order ($id, $symbol = null, $params = array ()) {
         if ($symbol === null)
-            throw new ExchangeError ($this->id . ' fetchOrder requires a $symbol argument');
+            throw new ArgumentsRequired ($this->id . ' fetchOrder requires a $symbol argument');
         $this->load_markets();
         $request = array (
             'symbol' => $this->market_id($symbol),
@@ -506,7 +508,7 @@ class bcex extends Exchange {
         $response = $this->privatePostApiOrderOrderInfo (array_merge ($request, $params));
         $order = $response['data'];
         $timestamp = $this->safe_integer($order, 'created') * 1000;
-        $status = $this->parse_order_status($order['status']);
+        $status = $this->parse_order_status($this->safe_string($order, 'status'));
         $side = $this->safe_string($order, 'flag');
         if ($side === 'sale')
             $side = 'sell';
@@ -535,7 +537,6 @@ class bcex extends Exchange {
     public function parse_order ($order, $market = null) {
         $id = $this->safe_string($order, 'id');
         $timestamp = $this->safe_integer($order, 'datetime') * 1000;
-        $iso8601 = $this->iso8601 ($timestamp);
         $symbol = $market['symbol'];
         $type = null;
         $side = $this->safe_string($order, 'type');
@@ -546,15 +547,14 @@ class bcex extends Exchange {
         $amount = $this->safe_float($order, 'amount');
         $remaining = $this->safe_float($order, 'amount_outstanding');
         $filled = $amount - $remaining;
-        $status = $this->safe_string($order, 'status');
-        $status = $this->parse_order_status($status);
+        $status = $this->parse_order_status($this->safe_string($order, 'status'));
         $cost = $filled * $price;
         $fee = null;
         $result = array (
             'info' => $order,
             'id' => $id,
             'timestamp' => $timestamp,
-            'datetime' => $iso8601,
+            'datetime' => $this->iso8601 ($timestamp),
             'lastTradeTimestamp' => null,
             'symbol' => $symbol,
             'type' => $type,
@@ -619,7 +619,7 @@ class bcex extends Exchange {
 
     public function cancel_order ($id, $symbol = null, $params = array ()) {
         if ($symbol === null)
-            throw new ExchangeError ($this->id . ' cancelOrder requires a $symbol argument');
+            throw new ArgumentsRequired ($this->id . ' cancelOrder requires a $symbol argument');
         $this->load_markets();
         $request = array ();
         if ($symbol !== null) {
@@ -655,13 +655,12 @@ class bcex extends Exchange {
         return array ( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($code, $reason, $url, $method, $headers, $body) {
+    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response) {
         if (gettype ($body) !== 'string')
             return; // fallback to default error handler
         if (strlen ($body) < 2)
             return; // fallback to default error handler
         if (($body[0] === '{') || ($body[0] === '[')) {
-            $response = json_decode ($body, $as_associative_array = true);
             $code = $this->safe_value($response, 'code');
             if ($code !== null) {
                 if ($code !== 0) {

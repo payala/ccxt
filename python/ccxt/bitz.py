@@ -12,10 +12,10 @@ try:
 except NameError:
     basestring = str  # Python 2
 import math
-import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import PermissionDenied
+from ccxt.base.errors import ArgumentsRequired
 from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
@@ -62,8 +62,8 @@ class bitz (Exchange):
                     'assets': 'https://apiv2.bitz.com',
                 },
                 'www': 'https://www.bit-z.com',
-                'doc': 'https://apidoc.bit-z.com/en',
-                'fees': 'https://www.bit-z.com/about/fee',
+                'doc': 'https://apidoc.bit-z.com/en/',
+                'fees': 'https://www.bit-z.com/fee?type=1',
                 'referral': 'https://u.bit-z.com/register?invite_code=1429193',
             },
             'api': {
@@ -169,6 +169,9 @@ class bitz (Exchange):
                 'lastNonceTimestamp': 0,
             },
             'commonCurrencies': {
+                # https://github.com/ccxt/ccxt/issues/3881
+                # https://support.bit-z.pro/hc/en-us/articles/360007500654-BOX-BOX-Token-
+                'BOX': 'BOX Token',
                 'XRB': 'NANO',
                 'PXC': 'Pixiecoin',
             },
@@ -214,7 +217,7 @@ class bitz (Exchange):
             },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         response = self.marketGetSymbolList()
         #
         #     {   status:    200,
@@ -362,6 +365,12 @@ class bitz (Exchange):
         if market is not None:
             symbol = market['symbol']
         last = self.safe_float(ticker, 'now')
+        open = self.safe_float(ticker, 'open')
+        change = None
+        average = None
+        if last is not None and open is not None:
+            change = last - open
+            average = self.sum(last, open) / 2
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -373,13 +382,13 @@ class bitz (Exchange):
             'ask': self.safe_float(ticker, 'askPrice'),
             'askVolume': self.safe_float(ticker, 'askQty'),
             'vwap': None,
-            'open': self.safe_float(ticker, 'open'),
+            'open': open,
             'close': last,
             'last': last,
             'previousClose': None,
-            'change': self.safe_float(ticker, 'priceChange24h'),
-            'percentage': None,
-            'average': None,
+            'change': change,
+            'percentage': self.safe_float(ticker, 'priceChange24h'),
+            'average': average,
             'baseVolume': self.safe_float(ticker, 'volume'),
             'quoteVolume': self.safe_float(ticker, 'quoteVolume'),
             'info': ticker,
@@ -391,7 +400,7 @@ class bitz (Exchange):
         parts = microtime.split(' ')
         milliseconds = float(parts[0])
         seconds = int(parts[1])
-        total = seconds + milliseconds
+        total = self.sum(seconds, milliseconds)
         return int(total * 1000)
 
     def fetch_ticker(self, symbol, params={}):
@@ -472,7 +481,6 @@ class bitz (Exchange):
         #
         tickers = response['data']
         timestamp = self.parse_microtime(self.safe_string(response, 'microtime'))
-        iso8601 = self.iso8601(timestamp)
         result = {}
         ids = list(tickers.keys())
         for i in range(0, len(ids)):
@@ -496,7 +504,7 @@ class bitz (Exchange):
             if symbol is not None:
                 result[symbol] = self.extend(ticker, {
                     'timestamp': timestamp,
-                    'datetime': iso8601,
+                    'datetime': self.iso8601(timestamp),
                 })
         return result
 
@@ -625,7 +633,7 @@ class bitz (Exchange):
                 request['to'] = since + limit * duration * 1000
         else:
             if since is not None:
-                raise ExchangeError(self.id + ' fetchOHLCV requires a since argument to be supplied along with the limit argument')
+                raise ExchangeError(self.id + ' fetchOHLCV requires a limit argument if the since argument is specified')
         response = self.marketGetKline(self.extend(request, params))
         #
         #     {   status:    200,
@@ -748,7 +756,7 @@ class bitz (Exchange):
             'symbol': market['id'],
             'type': orderType,
             'price': self.price_to_precision(symbol, price),
-            'number': self.amount_to_string(symbol, amount),
+            'number': self.amount_to_precision(symbol, amount),
             'tradePwd': self.password,
         }
         response = self.tradePostAddEntrustSheet(self.extend(request, params))
@@ -884,7 +892,7 @@ class bitz (Exchange):
     def fetch_orders_with_method(self, method, symbol=None, since=None, limit=None, params={}):
         self.load_markets()
         if symbol is None:
-            raise ExchangeError(self.id + ' fetchOpenOrders requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' fetchOpenOrders requires a symbol argument')
         market = self.market(symbol)
         request = {
             'coinFrom': market['baseId'],
@@ -953,7 +961,11 @@ class bitz (Exchange):
         #         "source": "api"
         #     }
         #
-        return self.parse_orders(response['data']['data'], None, since, limit)
+        orders = self.safe_value(response['data'], 'data')
+        if orders:
+            return self.parse_orders(response['data']['data'], None, since, limit)
+        else:
+            return []
 
     def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
         return self.fetch_orders_with_method('tradePostGetUserHistoryEntrustSheet', symbol, since, limit, params)
@@ -990,13 +1002,12 @@ class bitz (Exchange):
             headers = {'Content-type': 'application/x-www-form-urlencoded'}
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, httpCode, reason, url, method, headers, body):
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response):
         if not isinstance(body, basestring):
             return  # fallback to default error handler
         if len(body) < 2:
             return  # fallback to default error handler
         if (body[0] == '{') or (body[0] == '['):
-            response = json.loads(body)
             status = self.safe_string(response, 'status')
             if status is not None:
                 feedback = self.id + ' ' + body

@@ -11,9 +11,9 @@ try:
     basestring  # Python 3
 except NameError:
     basestring = str  # Python 2
-import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
+from ccxt.base.errors import ArgumentsRequired
 from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
@@ -45,8 +45,8 @@ class bcex (Exchange):
                 'logo': 'https://user-images.githubusercontent.com/1294454/43362240-21c26622-92ee-11e8-9464-5801ec526d77.jpg',
                 'api': 'https://www.bcex.top',
                 'www': 'https://www.bcex.top',
-                'doc': 'https://www.bcex.top/api_market/market/',
-                'fees': 'http://bcex.udesk.cn/hc/articles/57085',
+                'doc': 'https://github.com/BCEX-TECHNOLOGY-LIMITED/API_Docs/wiki/Interface',
+                'fees': 'https://bcex.udesk.cn/hc/articles/57085',
                 'referral': 'https://www.bcex.top/user/reg/type/2/pid/758978',
             },
             'api': {
@@ -292,7 +292,7 @@ class bcex (Exchange):
             },
         }
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         response = self.publicGetApiMarketGetPriceList()
         result = []
         keys = list(response.keys())
@@ -358,7 +358,9 @@ class bcex (Exchange):
         if price is not None:
             if amount is not None:
                 cost = amount * price
-        side = self.safe_string(trade, 'type')
+        side = self.safe_string(trade, 'side')
+        if side == 'sale':
+            side = 'sell'
         return {
             'info': trade,
             'id': id,
@@ -482,7 +484,7 @@ class bcex (Exchange):
 
     def fetch_order(self, id, symbol=None, params={}):
         if symbol is None:
-            raise ExchangeError(self.id + ' fetchOrder requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' fetchOrder requires a symbol argument')
         self.load_markets()
         request = {
             'symbol': self.market_id(symbol),
@@ -491,7 +493,7 @@ class bcex (Exchange):
         response = self.privatePostApiOrderOrderInfo(self.extend(request, params))
         order = response['data']
         timestamp = self.safe_integer(order, 'created') * 1000
-        status = self.parse_order_status(order['status'])
+        status = self.parse_order_status(self.safe_string(order, 'status'))
         side = self.safe_string(order, 'flag')
         if side == 'sale':
             side = 'sell'
@@ -519,7 +521,6 @@ class bcex (Exchange):
     def parse_order(self, order, market=None):
         id = self.safe_string(order, 'id')
         timestamp = self.safe_integer(order, 'datetime') * 1000
-        iso8601 = self.iso8601(timestamp)
         symbol = market['symbol']
         type = None
         side = self.safe_string(order, 'type')
@@ -530,15 +531,14 @@ class bcex (Exchange):
         amount = self.safe_float(order, 'amount')
         remaining = self.safe_float(order, 'amount_outstanding')
         filled = amount - remaining
-        status = self.safe_string(order, 'status')
-        status = self.parse_order_status(status)
+        status = self.parse_order_status(self.safe_string(order, 'status'))
         cost = filled * price
         fee = None
         result = {
             'info': order,
             'id': id,
             'timestamp': timestamp,
-            'datetime': iso8601,
+            'datetime': self.iso8601(timestamp),
             'lastTradeTimestamp': None,
             'symbol': symbol,
             'type': type,
@@ -595,7 +595,7 @@ class bcex (Exchange):
 
     def cancel_order(self, id, symbol=None, params={}):
         if symbol is None:
-            raise ExchangeError(self.id + ' cancelOrder requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' cancelOrder requires a symbol argument')
         self.load_markets()
         request = {}
         if symbol is not None:
@@ -624,13 +624,12 @@ class bcex (Exchange):
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, code, reason, url, method, headers, body):
+    def handle_errors(self, code, reason, url, method, headers, body, response):
         if not isinstance(body, basestring):
             return  # fallback to default error handler
         if len(body) < 2:
             return  # fallback to default error handler
         if (body[0] == '{') or (body[0] == '['):
-            response = json.loads(body)
             code = self.safe_value(response, 'code')
             if code is not None:
                 if code != 0:

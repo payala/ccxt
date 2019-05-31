@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, OrderNotFound, NotSupported, InvalidOrder, DDoSProtection } = require ('./base/errors');
+const { ExchangeError, OrderNotFound, ArgumentsRequired, InvalidOrder, DDoSProtection } = require ('./base/errors');
 
 //  ---------------------------------------------------------------------------
 
@@ -40,6 +40,8 @@ module.exports = class btcmarkets extends Exchange {
                         'market/{id}/tick',
                         'market/{id}/orderbook',
                         'market/{id}/trades',
+                        'v2/market/{id}/tickByTime/{timeframe}',
+                        'v2/market/{id}/trades',
                         'v2/market/active',
                     ],
                 },
@@ -47,6 +49,11 @@ module.exports = class btcmarkets extends Exchange {
                     'get': [
                         'account/balance',
                         'account/{id}/tradingfee',
+                        'v2/order/open',
+                        'v2/order/open/{id}',
+                        'v2/order/history/{id}',
+                        'v2/order/trade/history/{id}',
+                        'v2/transaction/history/{currency}',
                     ],
                     'post': [
                         'fundtransfer/withdrawCrypto',
@@ -78,7 +85,7 @@ module.exports = class btcmarkets extends Exchange {
         });
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let response = await this.publicGetV2MarketActive ();
         let result = [];
         let markets = response['markets'];
@@ -128,6 +135,7 @@ module.exports = class btcmarkets extends Exchange {
                 'quote': quote,
                 'baseId': baseId,
                 'quoteId': quoteId,
+                'active': undefined,
                 'maker': fee,
                 'taker': fee,
                 'limits': limits,
@@ -177,7 +185,7 @@ module.exports = class btcmarkets extends Exchange {
             'id': market['id'],
             'timeWindow': this.timeframes[timeframe],
         };
-        if (typeof since !== 'undefined')
+        if (since !== undefined)
             request['since'] = since;
         let response = await this.webGetMarketBTCMarketsIdTickByTime (this.extend (request, params));
         return this.parseOHLCVs (response['ticks'], market, timeframe, since, limit);
@@ -351,7 +359,7 @@ module.exports = class btcmarkets extends Exchange {
         let side = (order['orderSide'] === 'Bid') ? 'buy' : 'sell';
         let type = (order['ordertype'] === 'Limit') ? 'limit' : 'market';
         let timestamp = order['creationTime'];
-        if (typeof market === 'undefined') {
+        if (market === undefined) {
             market = this.market (order['instrument'] + '/' + order['currency']);
         }
         let status = 'open';
@@ -400,16 +408,16 @@ module.exports = class btcmarkets extends Exchange {
         return this.parseOrder (order);
     }
 
-    prepareHistoryRequest (market, since = undefined, limit = undefined) {
+    createPaginatedRequest (market, since = undefined, limit = undefined) {
         let request = this.ordered ({
-            'currency': market['quote'],
-            'instrument': market['base'],
+            'currency': market['quoteId'],
+            'instrument': market['baseId'],
         });
-        if (typeof limit !== 'undefined')
+        if (limit !== undefined)
             request['limit'] = limit;
         else
             request['limit'] = 100;
-        if (typeof since !== 'undefined')
+        if (since !== undefined)
             request['since'] = since;
         else
             request['since'] = 0;
@@ -417,21 +425,23 @@ module.exports = class btcmarkets extends Exchange {
     }
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        if (typeof symbol === 'undefined')
-            throw new NotSupported (this.id + ': fetchOrders requires a `symbol` parameter.');
+        if (symbol === undefined) {
+            throw new ArgumentsRequired (this.id + ': fetchOrders requires a `symbol` argument.');
+        }
         await this.loadMarkets ();
         let market = this.market (symbol);
-        let request = this.prepareHistoryRequest (market, since, limit);
+        let request = this.createPaginatedRequest (market, since, limit);
         let response = await this.privatePostOrderHistory (this.extend (request, params));
         return this.parseOrders (response['orders'], market);
     }
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        if (typeof symbol === 'undefined')
-            throw new NotSupported (this.id + ': fetchOpenOrders requires a `symbol` parameter.');
+        if (symbol === undefined) {
+            throw new ArgumentsRequired (this.id + ': fetchOpenOrders requires a `symbol` argument.');
+        }
         await this.loadMarkets ();
         let market = this.market (symbol);
-        let request = this.prepareHistoryRequest (market, since, limit);
+        let request = this.createPaginatedRequest (market, since, limit);
         let response = await this.privatePostOrderOpen (this.extend (request, params));
         return this.parseOrders (response['orders'], market);
     }
@@ -442,11 +452,12 @@ module.exports = class btcmarkets extends Exchange {
     }
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        if (typeof symbol === 'undefined')
-            throw new NotSupported (this.id + ': fetchMyTrades requires a `symbol` parameter.');
+        if (symbol === undefined) {
+            throw new ArgumentsRequired (this.id + ': fetchMyTrades requires a `symbol` argument.');
+        }
         await this.loadMarkets ();
         let market = this.market (symbol);
-        let request = this.prepareHistoryRequest (market, since, limit);
+        let request = this.createPaginatedRequest (market, since, limit);
         let response = await this.privatePostOrderTradeHistory (this.extend (request, params));
         return this.parseMyTrades (response['trades'], market);
     }
@@ -476,17 +487,17 @@ module.exports = class btcmarkets extends Exchange {
             let signature = this.hmac (this.encode (auth), secret, 'sha512', 'base64');
             headers['signature'] = this.decode (signature);
         } else {
-            if (Object.keys (params).length)
+            if (Object.keys (params).length) {
                 url += '?' + this.urlencode (params);
+            }
         }
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (code, reason, url, method, headers, body) {
+    handleErrors (code, reason, url, method, headers, body, response) {
         if (body.length < 2)
             return; // fallback to default error handler
         if (body[0] === '{') {
-            let response = JSON.parse (body);
             if ('success' in response) {
                 if (!response['success']) {
                     let error = this.safeString (response, 'errorCode');

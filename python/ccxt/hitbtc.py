@@ -32,7 +32,7 @@ class hitbtc (Exchange):
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/27766555-8eaec20e-5edc-11e7-9c5b-6dc69fc42f5e.jpg',
-                'api': 'http://api.hitbtc.com',
+                'api': 'https://api.hitbtc.com',
                 'www': 'https://hitbtc.com',
                 'referral': 'https://hitbtc.com/?ref_id=5a5d39a65d466',
                 'doc': 'https://github.com/hitbtc-com/hitbtc-api/blob/master/APIv1.md',
@@ -489,12 +489,13 @@ class hitbtc (Exchange):
                 },
             },
             'commonCurrencies': {
-                'BCC': 'BCC',
+                'BCH': 'Bitcoin Cash',
                 'BET': 'DAO.Casino',
                 'CAT': 'BitClave',
                 'DRK': 'DASH',
                 'EMGO': 'MGO',
                 'GET': 'Themis',
+                'HSR': 'HC',
                 'LNC': 'LinkerCoin',
                 'UNC': 'Unigame',
                 'USD': 'USDT',
@@ -505,7 +506,7 @@ class hitbtc (Exchange):
             },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         markets = self.publicGetSymbols()
         result = []
         for p in range(0, len(markets['symbols'])):
@@ -643,6 +644,10 @@ class hitbtc (Exchange):
         symbol = None
         if market:
             symbol = market['symbol']
+        side = None
+        tradeLength = len(trade)
+        if tradeLength > 3:
+            side = trade[4]
         return {
             'info': trade,
             'id': str(trade[0]),
@@ -650,7 +655,7 @@ class hitbtc (Exchange):
             'datetime': self.iso8601(trade[3]),
             'symbol': symbol,
             'type': None,
-            'side': trade[4],
+            'side': side,
             'price': float(trade[1]),
             'amount': float(trade[2]),
         }
@@ -688,7 +693,7 @@ class hitbtc (Exchange):
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
         self.load_markets()
         market = self.market(symbol)
-        response = self.publicGetSymbolTrades(self.extend({
+        request = {
             'symbol': market['id'],
             # 'from': 0,
             # 'till': 100,
@@ -702,8 +707,14 @@ class hitbtc (Exchange):
             # 'format_tid': 'string',
             # 'format_timestamp': 'millisecond',
             # 'format_wrap': False,
-            'side': 'true',
-        }, params))
+            # 'side': 'true',
+        }
+        if since is not None:
+            request['by'] = 'ts'
+            request['from'] = since
+        if limit is not None:
+            request['max_results'] = limit
+        response = self.publicGetSymbolTrades(self.extend(request, params))
         return self.parse_trades(response['trades'], market, since, limit)
 
     def create_order(self, symbol, type, side, amount, price=None, params={}):
@@ -758,9 +769,7 @@ class hitbtc (Exchange):
         symbol = None
         if not market:
             market = self.markets_by_id[order['symbol']]
-        status = self.safe_string(order, 'orderStatus')
-        if status:
-            status = self.parse_order_status(status)
+        status = self.parse_order_status(self.safe_string(order, 'orderStatus'))
         price = self.safe_float(order, 'orderPrice')
         price = self.safe_float(order, 'price', price)
         price = self.safe_float(order, 'avgPrice', price)
@@ -785,7 +794,8 @@ class hitbtc (Exchange):
         if amountDefined:
             if remainingDefined:
                 filled = amount - remaining
-                cost = price * filled
+                if price is not None:
+                    cost = price * filled
         feeCost = self.safe_float(order, 'fee')
         feeCurrency = None
         if market is not None:
@@ -871,8 +881,8 @@ class hitbtc (Exchange):
             'amount': amount,
             'address': address,
         }
-        if tag:
-            request['paymentId'] = tag
+        if tag is not None:
+            request['extra_id'] = tag
         response = self.paymentPostPayout(self.extend(request, params))
         return {
             'info': response,

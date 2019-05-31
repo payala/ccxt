@@ -5,6 +5,7 @@
 
 from ccxt.base.exchange import Exchange
 from ccxt.base.errors import ExchangeError
+from ccxt.base.errors import ArgumentsRequired
 
 
 class btctradeua (Exchange):
@@ -84,8 +85,8 @@ class btctradeua (Exchange):
             },
         })
 
-    def sign_in(self):
-        return self.privatePostAuth()
+    def sign_in(self, params={}):
+        return self.privatePostAuth(params)
 
     def fetch_balance(self, params={}):
         response = self.privatePostBalance()
@@ -282,7 +283,7 @@ class btctradeua (Exchange):
 
     def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
         if symbol is None:
-            raise ExchangeError(self.id + ' fetchOpenOrders requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' fetchOpenOrders requires a symbol argument')
         market = self.market(symbol)
         response = self.privatePostMyOrdersSymbol(self.extend({
             'symbol': market['id'],

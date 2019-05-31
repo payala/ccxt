@@ -18,11 +18,11 @@ module.exports = class fcoin extends Exchange {
             'version': 'v2',
             'accounts': undefined,
             'accountsById': undefined,
-            'hostname': 'api.fcoin.com',
+            'hostname': 'fcoin.com',
             'has': {
                 'CORS': false,
                 'fetchDepositAddress': false,
-                'fetchOHCLV': false,
+                'fetchOHLCV': true,
                 'fetchOpenOrders': true,
                 'fetchClosedOrders': true,
                 'fetchOrder': true,
@@ -46,11 +46,11 @@ module.exports = class fcoin extends Exchange {
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/42244210-c8c42e1e-7f1c-11e8-8710-a5fb63b165c4.jpg',
-                'api': 'https://api.fcoin.com',
+                'api': 'https://api.{hostname}',
                 'www': 'https://www.fcoin.com',
                 'referral': 'https://www.fcoin.com/i/Z5P7V',
                 'doc': 'https://developer.fcoin.com',
-                'fees': 'https://support.fcoin.com/hc/en-us/articles/360003715514-Trading-Rules',
+                'fees': 'https://fcoinjp.zendesk.com/hc/en-us/articles/360018727371',
             },
             'api': {
                 'market': {
@@ -124,11 +124,12 @@ module.exports = class fcoin extends Exchange {
             'commonCurrencies': {
                 'DAG': 'DAGX',
                 'PAI': 'PCHAIN',
+                'MT': 'Mariana Token',
             },
         });
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let response = await this.publicGetSymbols ();
         let result = [];
         let markets = response['data'];
@@ -152,6 +153,7 @@ module.exports = class fcoin extends Exchange {
                     'max': Math.pow (10, precision['price']),
                 },
             };
+            const active = this.safeValue (market, 'tradable', false);
             if (symbol in this.options['limits']) {
                 limits = this.extend (this.options['limits'][symbol], limits);
             }
@@ -162,7 +164,7 @@ module.exports = class fcoin extends Exchange {
                 'quote': quote,
                 'baseId': baseId,
                 'quoteId': quoteId,
-                'active': true,
+                'active': active,
                 'precision': precision,
                 'limits': limits,
                 'info': market,
@@ -204,8 +206,8 @@ module.exports = class fcoin extends Exchange {
             let priceField = this.sum (index, priceKey);
             let amountField = this.sum (index, amountKey);
             result.push ([
-                orders[priceField],
-                orders[amountField],
+                this.safeFloat (orders, priceField),
+                this.safeFloat (orders, amountField),
             ]);
         }
         return result;
@@ -213,18 +215,18 @@ module.exports = class fcoin extends Exchange {
 
     async fetchOrderBook (symbol = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        if (typeof limit !== 'undefined') {
-            if ((limit === 20) || (limit === 100)) {
+        if (limit !== undefined) {
+            if ((limit === 20) || (limit === 150)) {
                 limit = 'L' + limit.toString ();
             } else {
-                throw new ExchangeError (this.id + ' fetchOrderBook supports limit of 20, 100 or no limit. Other values are not accepted');
+                throw new ExchangeError (this.id + ' fetchOrderBook supports limit of 20 or 150. Other values are not accepted');
             }
         } else {
-            limit = 'full';
+            limit = 'L20';
         }
         let request = this.extend ({
             'symbol': this.marketId (symbol),
-            'level': limit, // L20, L100, full
+            'level': limit, // L20, L150
         }, params);
         let response = await this.marketGetDepthLevelSymbol (request);
         let orderbook = response['data'];
@@ -243,9 +245,9 @@ module.exports = class fcoin extends Exchange {
     parseTicker (ticker, market = undefined) {
         let timestamp = undefined;
         let symbol = undefined;
-        if (typeof market === 'undefined') {
+        if (market === undefined) {
             let tickerType = this.safeString (ticker, 'type');
-            if (typeof tickerType !== 'undefined') {
+            if (tickerType !== undefined) {
                 let parts = tickerType.split ('.');
                 let id = parts[1];
                 if (id in this.markets_by_id) {
@@ -255,7 +257,7 @@ module.exports = class fcoin extends Exchange {
         }
         let values = ticker['ticker'];
         let last = values[0];
-        if (typeof market !== 'undefined') {
+        if (market !== undefined) {
             symbol = market['symbol'];
         }
         return {
@@ -284,7 +286,7 @@ module.exports = class fcoin extends Exchange {
 
     parseTrade (trade, market = undefined) {
         let symbol = undefined;
-        if (typeof market !== 'undefined') {
+        if (market !== undefined) {
             symbol = market['symbol'];
         }
         let timestamp = parseInt (trade['ts']);
@@ -317,7 +319,7 @@ module.exports = class fcoin extends Exchange {
             'symbol': market['id'],
             'limit': limit,
         };
-        if (typeof since !== 'undefined') {
+        if (since !== undefined) {
             request['timestamp'] = parseInt (since / 1000);
         }
         let response = await this.marketGetTradesSymbol (this.extend (request, params));
@@ -329,7 +331,7 @@ module.exports = class fcoin extends Exchange {
             // for market buy it requires the amount of quote currency to spend
             if (side === 'buy') {
                 if (this.options['createMarketBuyOrderRequiresPrice']) {
-                    if (typeof price === 'undefined') {
+                    if (price === undefined) {
                         throw new InvalidOrder (this.id + " createOrder() requires the price argument with market buy orders to calculate total order cost (amount to spend), where cost = amount * price. Supply a price argument to createOrder() call if you want the cost to be calculated for you from price and amount, or, alternatively, add .options['createMarketBuyOrderRequiresPrice'] = false to supply the cost in the amount argument (the exchange-specific behaviour)");
                     } else {
                         amount = amount * price;
@@ -387,7 +389,7 @@ module.exports = class fcoin extends Exchange {
         let side = this.safeString (order, 'side');
         let status = this.parseOrderStatus (this.safeString (order, 'state'));
         let symbol = undefined;
-        if (typeof market === 'undefined') {
+        if (market === undefined) {
             let marketId = this.safeString (order, 'symbol');
             if (marketId in this.markets_by_id) {
                 market = this.markets_by_id[marketId];
@@ -400,12 +402,12 @@ module.exports = class fcoin extends Exchange {
         let remaining = undefined;
         let price = this.safeFloat (order, 'price');
         let cost = this.safeFloat (order, 'executed_value');
-        if (typeof filled !== 'undefined') {
-            if (typeof amount !== 'undefined') {
+        if (filled !== undefined) {
+            if (amount !== undefined) {
                 remaining = amount - filled;
             }
-            if (typeof cost === 'undefined') {
-                if (typeof price !== 'undefined') {
+            if (cost === undefined) {
+                if (price !== undefined) {
                     cost = price * filled;
                 }
             } else if ((cost > 0) && (filled > 0)) {
@@ -413,7 +415,7 @@ module.exports = class fcoin extends Exchange {
             }
         }
         let feeCurrency = undefined;
-        if (typeof market !== 'undefined') {
+        if (market !== undefined) {
             symbol = market['symbol'];
             feeCurrency = (side === 'buy') ? market['base'] : market['quote'];
         }
@@ -469,7 +471,7 @@ module.exports = class fcoin extends Exchange {
             'symbol': market['id'],
             'states': 'submitted,partial_filled,partial_canceled,filled,canceled',
         };
-        if (typeof limit !== 'undefined')
+        if (limit !== undefined)
             request['limit'] = limit;
         let response = await this.privateGetOrders (this.extend (request, params));
         return this.parseOrders (response['data'], market, since, limit);
@@ -488,7 +490,7 @@ module.exports = class fcoin extends Exchange {
 
     async fetchOHLCV (symbol, timeframe = '1m', since = undefined, limit = 100, params = {}) {
         await this.loadMarkets ();
-        if (typeof limit === 'undefined') {
+        if (limit === undefined) {
             throw new ExchangeError (this.id + ' fetchOHLCV requires a limit argument');
         }
         let market = this.market (symbol);
@@ -510,7 +512,10 @@ module.exports = class fcoin extends Exchange {
         request += (api === 'private') ? '' : (api + '/');
         request += this.implodeParams (path, params);
         let query = this.omit (params, this.extractParams (path));
-        let url = this.urls['api'] + request;
+        let url = this.implodeParams (this.urls['api'], {
+            'hostname': this.hostname,
+        });
+        url += request;
         if ((api === 'public') || (api === 'market')) {
             if (Object.keys (query).length) {
                 url += '?' + this.urlencode (query);
@@ -545,13 +550,12 @@ module.exports = class fcoin extends Exchange {
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
-    handleErrors (code, reason, url, method, headers, body) {
+    handleErrors (code, reason, url, method, headers, body, response) {
         if (typeof body !== 'string')
             return; // fallback to default error handler
         if (body.length < 2)
             return; // fallback to default error handler
         if ((body[0] === '{') || (body[0] === '[')) {
-            const response = JSON.parse (body);
             let status = this.safeString (response, 'status');
             if (status !== '0') {
                 const feedback = this.id + ' ' + body;

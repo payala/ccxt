@@ -4,7 +4,15 @@
 # https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#how-to-contribute-code
 
 from ccxt.async_support.base.exchange import Exchange
+
+# -----------------------------------------------------------------------------
+
+try:
+    basestring  # Python 3
+except NameError:
+    basestring = str  # Python 2
 from ccxt.base.errors import ExchangeError
+from ccxt.base.errors import ExchangeNotAvailable
 
 
 class _1btcxe (Exchange):
@@ -56,7 +64,7 @@ class _1btcxe (Exchange):
             },
         })
 
-    async def fetch_markets(self):
+    async def fetch_markets(self, params={}):
         return [
             {'id': 'USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD'},
             {'id': 'EUR', 'symbol': 'BTC/EUR', 'base': 'BTC', 'quote': 'EUR'},
@@ -154,7 +162,7 @@ class _1btcxe (Exchange):
             'currency': market['id'],
             'timeframe': self.timeframes[timeframe],
         }, params))
-        ohlcvs = self.omit(response['historical-prices'], 'request_currency')
+        ohlcvs = self.to_array(self.omit(response['historical-prices'], 'request_currency'))
         return self.parse_ohlcvs(ohlcvs, market, timeframe, since, limit)
 
     def parse_trade(self, trade, market):
@@ -174,10 +182,13 @@ class _1btcxe (Exchange):
 
     async def fetch_trades(self, symbol, since=None, limit=None, params={}):
         market = self.market(symbol)
-        response = await self.publicGetTransactions(self.extend({
+        request = {
             'currency': market['id'],
-        }, params))
-        trades = self.omit(response['transactions'], 'request_currency')
+        }
+        if limit is not None:
+            request['limit'] = limit
+        response = await self.publicGetTransactions(self.extend(request, params))
+        trades = self.to_array(self.omit(response['transactions'], 'request_currency'))
         return self.parse_trades(trades, market, since, limit)
 
     async def create_order(self, symbol, type, side, amount, price=None, params={}):
@@ -198,14 +209,16 @@ class _1btcxe (Exchange):
     async def cancel_order(self, id, symbol=None, params={}):
         return await self.privatePostOrdersCancel({'id': id})
 
-    async def withdraw(self, currency, amount, address, tag=None, params={}):
+    async def withdraw(self, code, amount, address, tag=None, params={}):
         self.check_address(address)
         await self.load_markets()
-        response = await self.privatePostWithdrawalsNew(self.extend({
-            'currency': currency,
+        currency = self.currency(code)
+        request = {
+            'currency': currency['id'],
             'amount': float(amount),
             'address': address,
-        }, params))
+        }
+        response = await self.privatePostWithdrawalsNew(self.extend(request, params))
         return {
             'info': response,
             'id': response['result']['uuid'],
@@ -232,6 +245,9 @@ class _1btcxe (Exchange):
 
     async def request(self, path, api='public', method='GET', params={}, headers=None, body=None):
         response = await self.fetch2(path, api, method, params, headers, body)
+        if isinstance(response, basestring):
+            if response.find('Maintenance') >= 0:
+                raise ExchangeNotAvailable(self.id + ' on maintenance')
         if 'errors' in response:
             errors = []
             for e in range(0, len(response['errors'])):

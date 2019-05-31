@@ -12,10 +12,11 @@ try:
 except NameError:
     basestring = str  # Python 2
 import math
-import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
+from ccxt.base.errors import ArgumentsRequired
 from ccxt.base.errors import ExchangeNotAvailable
+from ccxt.base.errors import InvalidNonce
 
 
 class bigone (Exchange):
@@ -27,13 +28,14 @@ class bigone (Exchange):
             'countries': ['GB'],
             'version': 'v2',
             'has': {
-                'fetchTickers': True,
-                'fetchOpenOrders': True,
-                'fetchMyTrades': True,
-                'fetchDepositAddress': True,
-                'withdraw': True,
-                'fetchOHLCV': False,
+                'cancelAllOrders': True,
                 'createMarketOrder': False,
+                'fetchDepositAddress': True,
+                'fetchMyTrades': True,
+                'fetchOHLCV': False,
+                'fetchOpenOrders': True,
+                'fetchTickers': True,
+                'withdraw': True,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/42803606-27c2b5ec-89af-11e8-8d15-9c8c245e8b2c.jpg',
@@ -65,6 +67,9 @@ class bigone (Exchange):
                         'accounts',
                         'orders',
                         'orders/{order_id}',
+                        'trades',
+                        'withdrawals',
+                        'deposits',
                     ],
                     'post': [
                         'orders',
@@ -100,6 +105,7 @@ class bigone (Exchange):
             'exceptions': {
                 'codes': {
                     '401': AuthenticationError,
+                    '10030': InvalidNonce,  # {"message":"invalid nonce, nonce should be a 19bits number","code":10030}
                 },
                 'detail': {
                     'Internal server error': ExchangeNotAvailable,
@@ -107,7 +113,7 @@ class bigone (Exchange):
             },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         response = self.publicGetMarkets()
         markets = response['data']
         result = []
@@ -474,7 +480,7 @@ class bigone (Exchange):
         #         }
         #     }
         #
-        order = response['data']
+        order = self.safe_value(response, 'data')
         return self.parse_order(order)
 
     def cancel_all_orders(self, symbol=None, params={}):
@@ -505,17 +511,21 @@ class bigone (Exchange):
         response = self.privateGetOrdersOrderId(self.extend(request, params))
         #
         #     {
-        #         "id": 10,
-        #         "market_uuid": "d2185614-50c3-4588-b146-b8afe7534da6",
-        #         "price": "10.00",
-        #         "amount": "10.00",
-        #         "filled_amount": "9.0",
-        #         "avg_deal_price": "12.0",
-        #         "side": "ASK",
-        #         "state": "FILLED"
+        #       "data":
+        #         {
+        #           "id": 10,
+        #           "market_uuid": "BTC-EOS",
+        #           "price": "10.00",
+        #           "amount": "10.00",
+        #           "filled_amount": "9.0",
+        #           "avg_deal_price": "12.0",
+        #           "side": "ASK",
+        #           "state": "FILLED"
+        #         }
         #     }
         #
-        return self.parse_order(response)
+        order = self.safe_value(response, 'data')
+        return self.parse_order(order)
 
     def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
         # NAME      DESCRIPTION                                           EXAMPLE         REQUIRED
@@ -527,7 +537,7 @@ class bigone (Exchange):
         # side      order side one of                                     "ASK"/"BID"     False
         # state     order state one of                      "CANCELED"/"FILLED"/"PENDING" False
         if symbol is None:
-            raise ExchangeError(self.id + ' fetchOrders requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' fetchOrders requires a symbol argument')
         self.load_markets()
         market = self.market(symbol)
         request = {
@@ -588,6 +598,9 @@ class bigone (Exchange):
             'state': 'FILLED',
         }, params))
 
+    def nonce(self):
+        return self.microseconds() * 1000
+
     def sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
         query = self.omit(params, self.extract_params(path))
         url = self.urls['api'][api] + '/' + self.implode_params(path, params)
@@ -596,7 +609,7 @@ class bigone (Exchange):
                 url += '?' + self.urlencode(query)
         else:
             self.check_required_credentials()
-            nonce = self.nonce() * 1000000000
+            nonce = self.nonce()
             request = {
                 'type': 'OpenAPI',
                 'sub': self.apiKey,
@@ -614,15 +627,15 @@ class bigone (Exchange):
                 body = self.json(query)
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, httpCode, reason, url, method, headers, body):
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response):
         if not isinstance(body, basestring):
             return  # fallback to default error handler
         if len(body) < 2:
             return  # fallback to default error handler
         if (body[0] == '{') or (body[0] == '['):
-            response = json.loads(body)
             #
             #      {"errors":{"detail":"Internal server error"}}
+            #      {"errors":[{"message":"invalid nonce, nonce should be a 19bits number","code":10030}],"data":null}
             #
             error = self.safe_value(response, 'error')
             errors = self.safe_value(response, 'errors')
@@ -634,8 +647,11 @@ class bigone (Exchange):
                     code = self.safe_integer(error, 'code')
                 exceptions = self.exceptions['codes']
                 if errors is not None:
-                    code = self.safe_string(errors, 'detail')
-                    exceptions = self.exceptions['detail']
+                    if isinstance(errors, list):
+                        code = self.safe_string(errors[0], 'code')
+                    else:
+                        code = self.safe_string(errors, 'detail')
+                        exceptions = self.exceptions['detail']
                 if code in exceptions:
                     raise exceptions[code](feedback)
                 else:

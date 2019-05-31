@@ -17,6 +17,8 @@ module.exports = subclass (
                     'PermissionDenied': {},
                     'AccountSuspended': {},
                 },
+                'ArgumentsRequired': {},
+                'BadRequest': {},
                 'BadResponse': {
                     'NullResponse': {},
                 },
@@ -30,6 +32,7 @@ module.exports = subclass (
                     'CancelPending': {},
                     'OrderImmediatelyFillable': {},
                     'OrderNotFillable': {},
+                    'DuplicateOrderId': {},
                 },
                 'NotSupported': {},
             },

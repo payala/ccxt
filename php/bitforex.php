@@ -52,6 +52,7 @@ class bitforex extends Exchange {
                         'api/v1/fund/mainAccount',
                         'api/v1/fund/allAccount',
                         'api/v1/trade/placeOrder',
+                        'api/v1/trade/placeMultiOrder',
                         'api/v1/trade/cancelOrder',
                         'api/v1/trade/orderInfo',
                         'api/v1/trade/orderInfos',
@@ -62,8 +63,8 @@ class bitforex extends Exchange {
                 'trading' => array (
                     'tierBased' => false,
                     'percentage' => true,
-                    'maker' => 0.0,
-                    'taker' => 0.05 / 100,
+                    'maker' => 0.1 / 100,
+                    'taker' => 0.1 / 100,
                 ),
                 'funding' => array (
                     'tierBased' => false,
@@ -216,7 +217,7 @@ class bitforex extends Exchange {
         ));
     }
 
-    public function fetch_markets () {
+    public function fetch_markets ($params = array ()) {
         $response = $this->publicGetApiV1MarketSymbols ();
         $data = $response['data'];
         $result = array ();
@@ -282,7 +283,7 @@ class bitforex extends Exchange {
                 $cost = $amount * $price;
             }
         }
-        $sideId = $this->safe_string($trade, 'direction');
+        $sideId = $this->safe_integer($trade, 'direction');
         $side = $this->parse_side ($sideId);
         return array (
             'info' => $trade,
@@ -389,16 +390,15 @@ class bitforex extends Exchange {
         return $orderbook;
     }
 
-    public function parse_order_status ($orderStatusId) {
-        if ($orderStatusId === 0 || $orderStatusId === 1) {
-            return 'open';
-        } else if ($orderStatusId === 2) {
-            return 'closed';
-        } else if ($orderStatusId === 3 || $orderStatusId === 4) {
-            return 'canceled';
-        } else {
-            return null;
-        }
+    public function parse_order_status ($status) {
+        $statuses = array (
+            '0' => 'open',
+            '1' => 'open',
+            '2' => 'closed',
+            '3' => 'canceled',
+            '4' => 'canceled',
+        );
+        return (is_array ($statuses) && array_key_exists ($status, $statuses)) ? $statuses[$status] : $status;
     }
 
     public function parse_side ($sideId) {
@@ -413,9 +413,8 @@ class bitforex extends Exchange {
 
     public function parse_order ($order, $market = null) {
         $id = $this->safe_string($order, 'orderId');
-        $timestamp = $this->safe_float_2($order, 'createTime');
-        $iso8601 = $this->iso8601 ($timestamp);
-        $lastTradeTimestamp = $this->safe_float_2($order, 'lastTime');
+        $timestamp = $this->safe_float($order, 'createTime');
+        $lastTradeTimestamp = $this->safe_float($order, 'lastTime');
         $symbol = $market['symbol'];
         $sideId = $this->safe_integer($order, 'tradeType');
         $side = $this->parse_side ($sideId);
@@ -425,15 +424,19 @@ class bitforex extends Exchange {
         $amount = $this->safe_float($order, 'orderAmount');
         $filled = $this->safe_float($order, 'dealAmount');
         $remaining = $amount - $filled;
-        $statusId = $this->safe_integer($order, 'orderState');
-        $status = $this->parse_order_status($statusId);
+        $status = $this->parse_order_status($this->safe_string($order, 'orderState'));
         $cost = $filled * $price;
-        $fee = $this->safe_float($order, 'tradeFee');
+        $feeSide = ($side === 'buy') ? 'base' : 'quote';
+        $feeCurrency = $market[$feeSide];
+        $fee = array (
+            'cost' => $this->safe_float($order, 'tradeFee'),
+            'currency' => $feeCurrency,
+        );
         $result = array (
             'info' => $order,
             'id' => $id,
             'timestamp' => $timestamp,
-            'datetime' => $iso8601,
+            'datetime' => $this->iso8601 ($timestamp),
             'lastTradeTimestamp' => $lastTradeTimestamp,
             'symbol' => $symbol,
             'type' => $type,
@@ -545,12 +548,11 @@ class bitforex extends Exchange {
         return array ( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($code, $reason, $url, $method, $headers, $body) {
+    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response) {
         if (gettype ($body) !== 'string') {
             return; // fallback to default error handler
         }
         if (($body[0] === '{') || ($body[0] === '[')) {
-            $response = json_decode ($body, $as_associative_array = true);
             $feedback = $this->id . ' ' . $body;
             $success = $this->safe_value($response, 'success');
             if ($success !== null) {

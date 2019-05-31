@@ -6,11 +6,14 @@ If your question is formulated in a short manner like the above, we won't help. 
 
 When asking a question:
 - Use the search button for duplicates first!
-- **Post your request and response in `verbose` mode!** It's written and mentioned everywhere, in the [Troubleshooting](https://github.com/ccxt/ccxt/wiki/Manual#troubleshooting) section, in the [README](https://github.com/ccxt/ccxt/blob/master/README.md) and in many answers to similar questions among [previous issues](https://github.com/ccxt/ccxt/issues) and [pull requests](https://github.com/ccxt/ccxt/pulls).
+- **Post your request and response in `verbose` mode!** It's written and mentioned everywhere, in the [Troubleshooting](https://github.com/ccxt/ccxt/wiki/Manual#troubleshooting) section, in the [README](https://github.com/ccxt/ccxt/blob/master/README.md) and in many answers to similar questions among [previous issues](https://github.com/ccxt/ccxt/issues) and [pull requests](https://github.com/ccxt/ccxt/pulls). No excuses.
 - **Post your code** to reproduce the problem. Make it a complete short runnable program, don't swallow the lines and make it as compact as you can (5-10 lines of code), including the instantation code.
+      - **DON'T POST SCREENSHOTS OF CODE OR ERRORS, POST THE OUTPUT AND CODE IN PLAIN TEXT!**
     - **Surround code and output with triple backticks: &#096;&#096;&#096;GOOD&#096;&#096;&#096;**.
     - Don't confuse the backtick symbol (&#096;) with the quote symbol (\'): '''BAD'''
     - Don't confuse a single backtick with triple backticks: &#096;BAD&#096;
+
+- **DO NOT POST YOUR `apiKey` AND `secret`!** Keep them safe (remove them before posting)!
 - Post your version number of ccxt
 - Post your language version number, how do you think we can guess it otherwise?
 
@@ -37,4 +40,4 @@ This type of questions is usually a waste of time, because answering it usually 
 
 ## Hey! The fix you've uploaded is in JS, would you fix Python / PHP as well, please?
 
-Our build system generates exchange-specific Python and PHP code for us automatically, so it is transpiled from JS, and there's no need to fix all languages separately one by one. Thus, if it is fixed in JS, it is fixed in Python pip and PHP Composer as well. Just upgrade your version with `pip` or `composer` and you'll be fine. More about it here: https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#multilanguage-support
+Our build system generates exchange-specific Python and PHP code for us automatically, so it is transpiled from JS, and there's no need to fix all languages separately one by one. Thus, if it is fixed in JS, it is fixed in Python pip and PHP Composer as well. The automatic build usually takes 5-10 minutes. Just upgrade your version with `pip` or `composer` after the new version arrives and you'll be fine. More about it here: https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#multilanguage-support

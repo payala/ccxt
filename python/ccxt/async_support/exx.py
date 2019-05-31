@@ -13,7 +13,6 @@ except NameError:
     basestring = str  # Python 2
 import hashlib
 import math
-import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import ExchangeNotAvailable
@@ -103,7 +102,7 @@ class exx (Exchange):
             },
         })
 
-    async def fetch_markets(self):
+    async def fetch_markets(self, params={}):
         markets = await self.publicGetMarkets()
         ids = list(markets.keys())
         result = []
@@ -264,7 +263,7 @@ class exx (Exchange):
         cost = self.safe_float(order, 'trade_money')
         amount = self.safe_float(order, 'total_amount')
         filled = self.safe_float(order, 'trade_amount', 0.0)
-        remaining = self.amount_to_precision(symbol, amount - filled)
+        remaining = float(self.amount_to_precision(symbol, amount - filled))
         status = self.safe_integer(order, 'status')
         if status == 1:
             status = 'canceled'
@@ -283,7 +282,7 @@ class exx (Exchange):
             'datetime': self.iso8601(timestamp),
             'timestamp': timestamp,
             'lastTradeTimestamp': None,
-            'status': 'open',
+            'status': status,
             'symbol': symbol,
             'type': 'limit',
             'side': order['type'],
@@ -300,7 +299,7 @@ class exx (Exchange):
     async def create_order(self, symbol, type, side, amount, price=None, params={}):
         await self.load_markets()
         market = self.market(symbol)
-        response = await self.privateGetGetOrder(self.extend({
+        response = await self.privateGetOrder(self.extend({
             'currency': market['id'],
             'type': side,
             'price': price,
@@ -342,6 +341,8 @@ class exx (Exchange):
         orders = await self.privateGetGetOpenOrders(self.extend({
             'currency': market['id'],
         }, params))
+        if not isinstance(orders, list):
+            return []
         return self.parse_orders(orders, market, since, limit)
 
     def nonce(self):
@@ -358,20 +359,19 @@ class exx (Exchange):
                 'accesskey': self.apiKey,
                 'nonce': self.nonce(),
             }, params)))
-            signature = self.hmac(self.encode(query), self.encode(self.secret), hashlib.sha512)
-            url += '?' + query + '&signature=' + signature
+            signed = self.hmac(self.encode(query), self.encode(self.secret), hashlib.sha512)
+            url += '?' + query + '&signature=' + signed
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, httpCode, reason, url, method, headers, body):
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response):
         if not isinstance(body, basestring):
             return  # fallback to default error handler
         if len(body) < 2:
             return  # fallback to default error handler
         if (body[0] == '{') or (body[0] == '['):
-            response = json.loads(body)
             #
             #  {"result":false,"message":"服务端忙碌"}
             #  ... and other formats
@@ -385,7 +385,12 @@ class exx (Exchange):
                 exceptions = self.exceptions
                 if code in exceptions:
                     raise exceptions[code](feedback)
-                raise ExchangeError(feedback)
+                elif code == '308':
+                    # self is returned by the exchange when there are no open orders
+                    # {"code":308,"message":"Not Found Transaction Record"}
+                    return
+                else:
+                    raise ExchangeError(feedback)
             result = self.safe_value(response, 'result')
             if result is not None:
                 if not result:

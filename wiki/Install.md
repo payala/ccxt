@@ -56,10 +56,15 @@ If that does not help, please, follow here: https://github.com/nodejs/node-gyp#o
 
 ### JavaScript (for use with the `<script>` tag):
 
-[All-in-one browser bundle](https://unpkg.com/ccxt) (dependencies included), served from [unpkg CDN](https://unpkg.com/), which is a fast, global content delivery network for everything on NPM.
+All-in-one browser bundle (dependencies included), served from a CDN of your choice:
+
+* jsDelivr: https://cdn.jsdelivr.net/npm/ccxt@1.18.596/dist/ccxt.browser.js
+* unpkg: https://unpkg.com/ccxt@1.18.596/dist/ccxt.browser.js
+
+You can obtain a live-updated version of the bundle by removing the version number from the URL (the `@a.b.c` thing) — however, we do not recommend to do that, as it may break your app eventually. Also, please keep in mind that we are not responsible for the correct operation of those CDN servers.
 
 ```HTML
-<script type="text/javascript" src="https://unpkg.com/ccxt"></script>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/ccxt@1.18.596/dist/ccxt.browser.js"></script>
 ```
 
 Creates a global `ccxt` object:
@@ -89,7 +94,7 @@ import ccxt.async_support as ccxt # link against the asynchronous version of ccx
 
 ### PHP
 
-The autoloadable version of ccxt can be installed with [**Packagist/Composer**](https://packagist.org/packages/ccxt/ccxt) (PHP 5.3+).
+The autoloadable version of ccxt can be installed with [**Packagist/Composer**](https://packagist.org/packages/ccxt/ccxt) (PHP 5.4+).
 
 It can also be installed from the source code: [**`ccxt.php`**](https://raw.githubusercontent.com/ccxt/ccxt/master/php)
 
@@ -104,6 +109,23 @@ It requires common PHP modules:
 ```PHP
 include "ccxt.php";
 var_dump (\ccxt\Exchange::$exchanges); // print a list of all available exchange classes
+```
+
+### Docker
+
+You can get CCXT installed in a container along with all the supported languages and dependencies. This may be useful if you want to contribute to CCXT (e.g. run the build scripts and tests — please see the [Contributing](https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md) document for the details on that).
+
+Using `docker-compose` (in the cloned CCXT repository):
+
+```shell
+docker-compose run --rm ccxt
+```
+
+Alternatively:
+
+```shell
+docker build . --tag ccxt
+docker run -it ccxt
 ```
 
 ## Proxy

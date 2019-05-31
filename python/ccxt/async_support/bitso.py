@@ -11,7 +11,6 @@ try:
     basestring  # Python 3
 except NameError:
     basestring = str  # Python 2
-import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import OrderNotFound
@@ -31,6 +30,7 @@ class bitso (Exchange):
                 'CORS': True,
                 'fetchMyTrades': True,
                 'fetchOpenOrders': True,
+                'fetchOrder': True,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/27766335-715ce7aa-5ed5-11e7-88a8-173a27bb30fe.jpg',
@@ -38,6 +38,7 @@ class bitso (Exchange):
                 'www': 'https://bitso.com',
                 'doc': 'https://bitso.com/api_info',
                 'fees': 'https://bitso.com/fees?l=es',
+                'referral': 'https://bitso.com/?ref=itej',
             },
             'api': {
                 'public': {
@@ -99,7 +100,7 @@ class bitso (Exchange):
             },
         })
 
-    async def fetch_markets(self):
+    async def fetch_markets(self, params={}):
         markets = await self.publicGetAvailableBooks()
         result = []
         for i in range(0, len(markets['payload'])):
@@ -170,7 +171,9 @@ class bitso (Exchange):
         timestamp = self.parse8601(ticker['created_at'])
         vwap = self.safe_float(ticker, 'vwap')
         baseVolume = self.safe_float(ticker, 'volume')
-        quoteVolume = baseVolume * vwap
+        quoteVolume = None
+        if baseVolume is not None and vwap is not None:
+            quoteVolume = baseVolume * vwap
         last = self.safe_float(ticker, 'last')
         return {
             'symbol': symbol,
@@ -306,30 +309,41 @@ class bitso (Exchange):
         return status
 
     def parse_order(self, order, market=None):
-        side = order['side']
-        status = self.parse_order_status(order['status'])
+        id = self.safe_string(order, 'oid')
+        side = self.safe_string(order, 'side')
+        status = self.parse_order_status(self.safe_string(order, 'status'))
         symbol = None
-        if market is None:
-            marketId = order['book']
+        marketId = self.safe_string(order, 'book')
+        if marketId is not None:
             if marketId in self.markets_by_id:
                 market = self.markets_by_id[marketId]
-        if market:
-            symbol = market['symbol']
-        orderType = order['type']
-        timestamp = self.parse8601(order['created_at'])
+            else:
+                baseId, quoteId = marketId.split('_')
+                base = self.common_currency_code(baseId.upper())
+                quote = self.common_currency_code(quoteId.upper())
+                symbol = base + '/' + quote
+        if symbol is None:
+            if market is not None:
+                symbol = market['symbol']
+        orderType = self.safe_string(order, 'type')
+        timestamp = self.parse8601(self.safe_string(order, 'created_at'))
+        price = self.safe_float(order, 'price')
         amount = self.safe_float(order, 'original_amount')
         remaining = self.safe_float(order, 'unfilled_amount')
-        filled = amount - remaining
-        result = {
+        filled = None
+        if amount is not None:
+            if remaining is not None:
+                filled = amount - remaining
+        return {
             'info': order,
-            'id': order['oid'],
+            'id': id,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
             'lastTradeTimestamp': None,
             'symbol': symbol,
             'type': orderType,
             'side': side,
-            'price': self.safe_float(order, 'price'),
+            'price': price,
             'amount': amount,
             'cost': None,
             'remaining': remaining,
@@ -337,7 +351,6 @@ class bitso (Exchange):
             'status': status,
             'fee': None,
         }
-        return result
 
     async def fetch_open_orders(self, symbol=None, since=None, limit=25, params={}):
         await self.load_markets()
@@ -367,14 +380,15 @@ class bitso (Exchange):
 
     async def fetch_order(self, id, symbol=None, params={}):
         await self.load_markets()
-        market = self.market(symbol)
         response = await self.privateGetOrdersOid({
             'oid': id,
         })
-        numOrders = len(response['payload'])
-        if not isinstance(response['payload'], list) or (numOrders != 1):
-            raise OrderNotFound(self.id + ': The order ' + id + ' not found.')
-        return self.parse_order(response['payload'][0], market)
+        payload = self.safe_value(response, 'payload')
+        if isinstance(payload, list):
+            numOrders = len(response['payload'])
+            if numOrders == 1:
+                return self.parse_order(payload[0])
+        raise OrderNotFound(self.id + ': The order ' + id + ' not found.')
 
     async def fetch_order_trades(self, id, symbol=None, since=None, limit=None, params={}):
         await self.load_markets()
@@ -453,13 +467,12 @@ class bitso (Exchange):
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, httpCode, reason, url, method, headers, body):
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response):
         if not isinstance(body, basestring):
             return  # fallback to default error handler
         if len(body) < 2:
             return  # fallback to default error handler
         if (body[0] == '{') or (body[0] == '['):
-            response = json.loads(body)
             if 'success' in response:
                 #
                 #     {"success":false,"error":{"code":104,"message":"Cannot perform request - nonce must be higher than 1520307203724237"}}

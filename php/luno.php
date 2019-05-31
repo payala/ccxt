@@ -14,7 +14,7 @@ class luno extends Exchange {
             'id' => 'luno',
             'name' => 'luno',
             'countries' => array ( 'GB', 'SG', 'ZA' ),
-            'rateLimit' => 10000,
+            'rateLimit' => 1000,
             'version' => '1',
             'has' => array (
                 'CORS' => false,
@@ -24,6 +24,7 @@ class luno extends Exchange {
                 'fetchOpenOrders' => true,
                 'fetchClosedOrders' => true,
                 'fetchMyTrades' => true,
+                'fetchTradingFee' => true,
                 'fetchTradingFees' => true,
             ),
             'urls' => array (
@@ -83,7 +84,7 @@ class luno extends Exchange {
         ));
     }
 
-    public function fetch_markets () {
+    public function fetch_markets ($params = array ()) {
         $markets = $this->publicGetTickers ();
         $result = array ();
         for ($p = 0; $p < count ($markets['tickers']); $p++) {
@@ -350,7 +351,7 @@ class luno extends Exchange {
 
     public function fetch_my_trades ($symbol = null, $since = null, $limit = null, $params = array ()) {
         if ($symbol === null)
-            throw new ExchangeError ($this->id . ' fetchMyTrades requires a $symbol argument');
+            throw new ArgumentsRequired ($this->id . ' fetchMyTrades requires a $symbol argument');
         $this->load_markets();
         $market = $this->market ($symbol);
         $request = array (

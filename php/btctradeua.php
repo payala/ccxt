@@ -85,8 +85,8 @@ class btctradeua extends Exchange {
         ));
     }
 
-    public function sign_in () {
-        return $this->privatePostAuth ();
+    public function sign_in ($params = array ()) {
+        return $this->privatePostAuth ($params);
     }
 
     public function fetch_balance ($params = array ()) {
@@ -304,7 +304,7 @@ class btctradeua extends Exchange {
 
     public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
         if ($symbol === null)
-            throw new ExchangeError ($this->id . ' fetchOpenOrders requires a $symbol argument');
+            throw new ArgumentsRequired ($this->id . ' fetchOpenOrders requires a $symbol argument');
         $market = $this->market ($symbol);
         $response = $this->privatePostMyOrdersSymbol (array_merge (array (
             'symbol' => $market['id'],

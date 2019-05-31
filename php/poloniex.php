@@ -16,21 +16,28 @@ class poloniex extends Exchange {
             'countries' => array ( 'US' ),
             'rateLimit' => 1000, // up to 6 calls per second
             'has' => array (
-                'createDepositAddress' => true,
-                'fetchDepositAddress' => true,
                 'CORS' => false,
-                'editOrder' => true,
+                'createDepositAddress' => true,
                 'createMarketOrder' => false,
-                'fetchOHLCV' => true,
-                'fetchOrderTrades' => true,
-                'fetchMyTrades' => true,
-                'fetchOrder' => 'emulated',
-                'fetchOrders' => 'emulated',
-                'fetchOpenOrders' => true,
+                'editOrder' => true,
                 'fetchClosedOrders' => 'emulated',
-                'fetchTickers' => true,
-                'fetchTradingFees' => true,
                 'fetchCurrencies' => true,
+                'fetchDepositAddress' => true,
+                'fetchDeposits' => 'emulated',
+                'fetchMyTrades' => true,
+                'fetchOHLCV' => true,
+                'fetchOpenOrder' => true, // true endpoint for a single open order
+                'fetchOpenOrders' => true, // true endpoint for open orders
+                'fetchOrder' => 'emulated', // no endpoint for a single open-or-closed order (just for an open order only)
+                'fetchOrderBooks' => true,
+                'fetchOrders' => 'emulated', // no endpoint for open-or-closed orders (just for open orders only)
+                'fetchOrderStatus' => 'emulated', // no endpoint for status of a single open-or-closed order (just for open orders only)
+                'fetchOrderTrades' => true, // true endpoint for trades of a single open or closed order
+                'fetchTickers' => true,
+                'fetchTradingFee' => true,
+                'fetchTradingFees' => true,
+                'fetchTransactions' => true,
+                'fetchWithdrawals' => 'emulated', // but almost true )
                 'withdraw' => true,
             ),
             'timeframes' => array (
@@ -48,10 +55,7 @@ class poloniex extends Exchange {
                     'private' => 'https://poloniex.com/tradingApi',
                 ),
                 'www' => 'https://poloniex.com',
-                'doc' => array (
-                    'https://poloniex.com/support/api/',
-                    'http://pastebin.com/dMX7mZE0',
-                ),
+                'doc' => 'https://docs.poloniex.com',
                 'fees' => 'https://poloniex.com/fees',
             ),
             'api' => array (
@@ -90,6 +94,7 @@ class poloniex extends Exchange {
                         'returnOpenLoanOffers',
                         'returnOpenOrders',
                         'returnOrderTrades',
+                        'returnOrderStatus',
                         'returnTradableBalances',
                         'returnTradeHistory',
                         'sell',
@@ -110,7 +115,7 @@ class poloniex extends Exchange {
             ),
             'limits' => array (
                 'amount' => array (
-                    'min' => 0.00000001,
+                    'min' => 0.000001,
                     'max' => 1000000000,
                 ),
                 'price' => array (
@@ -156,13 +161,26 @@ class poloniex extends Exchange {
                 ),
             ),
             'exceptions' => array (
-                'Invalid order number, or you are not the person who placed the order.' => '\\ccxt\\OrderNotFound',
-                'Permission denied' => '\\ccxt\\PermissionDenied',
-                'Connection timed out. Please try again.' => '\\ccxt\\RequestTimeout',
-                'Internal error. Please try again.' => '\\ccxt\\ExchangeNotAvailable',
-                'Order not found, or you are not the person who placed it.' => '\\ccxt\\OrderNotFound',
-                'Invalid API key/secret pair.' => '\\ccxt\\AuthenticationError',
-                'Please do not make more than 8 API calls per second.' => '\\ccxt\\DDoSProtection',
+                'exact' => array (
+                    'You may only place orders that reduce your position.' => '\\ccxt\\InvalidOrder',
+                    'Invalid order number, or you are not the person who placed the order.' => '\\ccxt\\OrderNotFound',
+                    'Permission denied' => '\\ccxt\\PermissionDenied',
+                    'Connection timed out. Please try again.' => '\\ccxt\\RequestTimeout',
+                    'Internal error. Please try again.' => '\\ccxt\\ExchangeNotAvailable',
+                    'Order not found, or you are not the person who placed it.' => '\\ccxt\\OrderNotFound',
+                    'Invalid API key/secret pair.' => '\\ccxt\\AuthenticationError',
+                    'Please do not make more than 8 API calls per second.' => '\\ccxt\\DDoSProtection',
+                    'Rate must be greater than zero.' => '\\ccxt\\InvalidOrder', // array ("error":"Rate must be greater than zero.")
+                ),
+                'broad' => array (
+                    'Total must be at least' => '\\ccxt\\InvalidOrder', // array ("error":"Total must be at least 0.0001.")
+                    'This account is frozen.' => '\\ccxt\\AccountSuspended',
+                    'Not enough' => '\\ccxt\\InsufficientFunds',
+                    'Nonce must be greater' => '\\ccxt\\InvalidNonce',
+                    'You have already called cancelOrder or moveOrder on this order.' => '\\ccxt\\CancelPending',
+                    'Amount must be at least' => '\\ccxt\\InvalidOrder', // array ("error":"Amount must be at least 0.000001.")
+                    'is either completed or does not exist' => '\\ccxt\\InvalidOrder', // array ("error":"Order 587957810791 is either completed or does not exist.")
+                ),
             ),
         ));
     }
@@ -206,48 +224,40 @@ class poloniex extends Exchange {
             'period' => $this->timeframes[$timeframe],
             'start' => intval ($since / 1000),
         );
-        if ($limit !== null)
+        if ($limit !== null) {
             $request['end'] = $this->sum ($request['start'], $limit * $this->timeframes[$timeframe]);
+        } else {
+            $request['end'] = $this->sum ($this->seconds (), 1);
+        }
         $response = $this->publicGetReturnChartData (array_merge ($request, $params));
         return $this->parse_ohlcvs($response, $market, $timeframe, $since, $limit);
     }
 
-    public function fetch_markets () {
+    public function fetch_markets ($params = array ()) {
         $markets = $this->publicGetReturnTicker ();
         $keys = is_array ($markets) ? array_keys ($markets) : array ();
         $result = array ();
         for ($p = 0; $p < count ($keys); $p++) {
             $id = $keys[$p];
             $market = $markets[$id];
-            list ($quote, $base) = explode ('_', $id);
-            $base = $this->common_currency_code($base);
-            $quote = $this->common_currency_code($quote);
+            list ($quoteId, $baseId) = explode ('_', $id);
+            $base = $this->common_currency_code($baseId);
+            $quote = $this->common_currency_code($quoteId);
             $symbol = $base . '/' . $quote;
-            $minCost = $this->safe_float($this->options['limits']['cost']['min'], $quote, 0.0);
+            $limits = array_merge ($this->limits, array (
+                'cost' => array (
+                    'min' => $this->safe_value($this->options['limits']['cost']['min'], $quote),
+                ),
+            ));
             $result[] = array_merge ($this->fees['trading'], array (
                 'id' => $id,
                 'symbol' => $symbol,
+                'baseId' => $baseId,
+                'quoteId' => $quoteId,
                 'base' => $base,
                 'quote' => $quote,
-                'active' => true,
-                'precision' => array (
-                    'amount' => 8,
-                    'price' => 8,
-                ),
-                'limits' => array (
-                    'amount' => array (
-                        'min' => 0.00000001,
-                        'max' => 1000000000,
-                    ),
-                    'price' => array (
-                        'min' => 0.00000001,
-                        'max' => 1000000000,
-                    ),
-                    'cost' => array (
-                        'min' => $minCost,
-                        'max' => 1000000000,
-                    ),
-                ),
+                'active' => $market['isFrozen'] !== '1',
+                'limits' => $limits,
                 'info' => $market,
             ));
         }
@@ -293,12 +303,44 @@ class poloniex extends Exchange {
         $request = array (
             'currencyPair' => $this->market_id($symbol),
         );
-        if ($limit !== null)
+        if ($limit !== null) {
             $request['depth'] = $limit; // 100
+        }
         $response = $this->publicGetReturnOrderBook (array_merge ($request, $params));
         $orderbook = $this->parse_order_book($response);
-        $orderbook['nonce'] = $this->safe_integer($response, 'sec');
+        $orderbook['nonce'] = $this->safe_integer($response, 'seq');
         return $orderbook;
+    }
+
+    public function fetch_order_books ($symbols = null, $params = array ()) {
+        $this->load_markets();
+        $request = array (
+            'currencyPair' => 'all',
+        );
+        //
+        //     if (limit !== null) {
+        //         $request['depth'] = limit; // 100
+        //     }
+        //
+        $response = $this->publicGetReturnOrderBook (array_merge ($request, $params));
+        $marketIds = is_array ($response) ? array_keys ($response) : array ();
+        $result = array ();
+        for ($i = 0; $i < count ($marketIds); $i++) {
+            $marketId = $marketIds[$i];
+            $symbol = null;
+            if (is_array ($this->markets_by_id) && array_key_exists ($marketId, $this->markets_by_id)) {
+                $symbol = $this->markets_by_id[$marketId]['symbol'];
+            } else {
+                list ($quoteId, $baseId) = explode ('_', $marketId);
+                $base = $this->common_currency_code($baseId);
+                $quote = $this->common_currency_code($quoteId);
+                $symbol = $base . '/' . $quote;
+            }
+            $orderbook = $this->parse_order_book($response[$marketId]);
+            $orderbook['nonce'] = $this->safe_integer($response[$marketId], 'seq');
+            $result[$symbol] = $orderbook;
+        }
+        return $result;
     }
 
     public function parse_ticker ($ticker, $market = null) {
@@ -418,7 +460,37 @@ class poloniex extends Exchange {
     }
 
     public function parse_trade ($trade, $market = null) {
-        $timestamp = $this->parse8601 ($trade['date']);
+        //
+        // fetchMyTrades ($symbol defined, specific $market)
+        //
+        //     {
+        //         globalTradeID => 394698946,
+        //         tradeID => 45210255,
+        //         date => '2018-10-23 17:28:55',
+        //         type => 'sell',
+        //         $rate => '0.03114126',
+        //         $amount => '0.00018753',
+        //         total => '0.00000583'
+        //     }
+        //
+        // fetchMyTrades ($symbol null, all markets)
+        //
+        //     {
+        //         globalTradeID => 394131412,
+        //         tradeID => '5455033',
+        //         date => '2018-10-16 18:05:17',
+        //         $rate => '0.06935244',
+        //         $amount => '1.40308443',
+        //         total => '0.09730732',
+        //         $fee => '0.00100000',
+        //         orderNumber => '104768235081',
+        //         type => 'sell',
+        //         category => 'exchange'
+        //     }
+        //
+        $id = $this->safe_string($trade, 'globalTradeID');
+        $orderId = $this->safe_string($trade, 'orderNumber');
+        $timestamp = $this->parse8601 ($this->safe_string($trade, 'date'));
         $symbol = null;
         $base = null;
         $quote = null;
@@ -438,8 +510,9 @@ class poloniex extends Exchange {
             $base = $market['base'];
             $quote = $market['quote'];
         }
-        $side = $trade['type'];
+        $side = $this->safe_string($trade, 'type');
         $fee = null;
+        $price = $this->safe_float($trade, 'rate');
         $cost = $this->safe_float($trade, 'total');
         $amount = $this->safe_float($trade, 'amount');
         if (is_array ($trade) && array_key_exists ('fee', $trade)) {
@@ -466,11 +539,11 @@ class poloniex extends Exchange {
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
             'symbol' => $symbol,
-            'id' => $this->safe_string($trade, 'tradeID'),
-            'order' => $this->safe_string($trade, 'orderNumber'),
+            'id' => $id,
+            'order' => $orderId,
             'type' => 'limit',
             'side' => $side,
-            'price' => $this->safe_float($trade, 'rate'),
+            'price' => $price,
             'amount' => $amount,
             'cost' => $cost,
             'fee' => $fee,
@@ -506,6 +579,58 @@ class poloniex extends Exchange {
         if ($limit !== null)
             $request['limit'] = intval ($limit);
         $response = $this->privatePostReturnTradeHistory (array_merge ($request, $params));
+        //
+        // specific $market ($symbol defined)
+        //
+        //     array (
+        //         array (
+        //             globalTradeID => 394700861,
+        //             tradeID => 45210354,
+        //             date => '2018-10-23 18:01:58',
+        //             type => 'buy',
+        //             rate => '0.03117266',
+        //             amount => '0.00000652',
+        //             total => '0.00000020'
+        //         ),
+        //         {
+        //             globalTradeID => 394698946,
+        //             tradeID => 45210255,
+        //             date => '2018-10-23 17:28:55',
+        //             type => 'sell',
+        //             rate => '0.03114126',
+        //             amount => '0.00018753',
+        //             total => '0.00000583'
+        //         }
+        //     )
+        //
+        // all markets ($symbol null)
+        //
+        //     {
+        //         BTC_BCH => [array (
+        //             globalTradeID => 394131412,
+        //             tradeID => '5455033',
+        //             date => '2018-10-16 18:05:17',
+        //             rate => '0.06935244',
+        //             amount => '1.40308443',
+        //             total => '0.09730732',
+        //             fee => '0.00100000',
+        //             orderNumber => '104768235081',
+        //             type => 'sell',
+        //             category => 'exchange'
+        //         ), array (
+        //             globalTradeID => 394126818,
+        //             tradeID => '5455007',
+        //             date => '2018-10-16 16:55:34',
+        //             rate => '0.06935244',
+        //             amount => '0.00155709',
+        //             total => '0.00010798',
+        //             fee => '0.00200000',
+        //             orderNumber => '104768179137',
+        //             type => 'sell',
+        //             category => 'exchange'
+        //         )],
+        //     }
+        //
         $result = array ();
         if ($market !== null) {
             $result = $this->parse_trades($response, $market);
@@ -515,11 +640,23 @@ class poloniex extends Exchange {
                 for ($i = 0; $i < count ($ids); $i++) {
                     $id = $ids[$i];
                     $market = null;
-                    if (is_array ($this->markets_by_id) && array_key_exists ($id, $this->markets_by_id))
+                    if (is_array ($this->markets_by_id) && array_key_exists ($id, $this->markets_by_id)) {
                         $market = $this->markets_by_id[$id];
-                    $trades = $this->parse_trades($response[$id], $market);
-                    for ($j = 0; $j < count ($trades); $j++) {
-                        $result[] = $trades[$j];
+                        $trades = $this->parse_trades($response[$id], $market);
+                        for ($j = 0; $j < count ($trades); $j++) {
+                            $result[] = $trades[$j];
+                        }
+                    } else {
+                        list ($quoteId, $baseId) = explode ('_', $id);
+                        $base = $this->common_currency_code($baseId);
+                        $quote = $this->common_currency_code($quoteId);
+                        $symbol = $base . '/' . $quote;
+                        $trades = $response[$id];
+                        for ($j = 0; $j < count ($trades); $j++) {
+                            $result[] = array_merge ($this->parse_trade($trades[$j]), array (
+                                'symbol' => $symbol,
+                            ));
+                        }
                     }
                 }
             }
@@ -527,7 +664,42 @@ class poloniex extends Exchange {
         return $this->filter_by_since_limit($result, $since, $limit);
     }
 
+    public function parse_order_status ($status) {
+        $statuses = array (
+            'Open' => 'open',
+            'Partially filled' => 'open',
+        );
+        return $this->safe_string($statuses, $status, $status);
+    }
+
     public function parse_order ($order, $market = null) {
+        //
+        // fetchOpenOrder
+        //
+        //     {
+        //         $status => 'Open',
+        //         rate => '0.40000000',
+        //         $amount => '1.00000000',
+        //         currencyPair => 'BTC_ETH',
+        //         date => '2018-10-17 17:04:50',
+        //         total => '0.40000000',
+        //         $type => 'buy',
+        //         startingAmount => '1.00000',
+        //     }
+        //
+        // fetchOpenOrders
+        //
+        //     {
+        //         orderNumber => '514514894224',
+        //         $type => 'buy',
+        //         rate => '0.00001000',
+        //         startingAmount => '100.00000000',
+        //         $amount => '100.00000000',
+        //         total => '0.00100000',
+        //         date => '2018-10-23 17:38:53',
+        //         margin => 0,
+        //     }
+        //
         $timestamp = $this->safe_integer($order, 'timestamp');
         if (!$timestamp)
             $timestamp = $this->parse8601 ($order['date']);
@@ -535,9 +707,12 @@ class poloniex extends Exchange {
         if (is_array ($order) && array_key_exists ('resultingTrades', $order))
             $trades = $this->parse_trades($order['resultingTrades'], $market);
         $symbol = null;
-        if ($market)
+        $marketId = $this->safe_string($order, 'currencyPair');
+        $market = $this->safe_value($this->markets_by_id, $marketId, $market);
+        if ($market !== null) {
             $symbol = $market['symbol'];
-        $price = $this->safe_float($order, 'price');
+        }
+        $price = $this->safe_float_2($order, 'price', 'rate');
         $remaining = $this->safe_float($order, 'amount');
         $amount = $this->safe_float($order, 'startingAmount', $remaining);
         $filled = null;
@@ -562,16 +737,22 @@ class poloniex extends Exchange {
                 }
             }
         }
+        $status = $this->parse_order_status($this->safe_string($order, 'status'));
+        $type = $this->safe_string($order, 'type');
+        $side = $this->safe_string($order, 'side', $type);
+        if ($type === $side) {
+            $type = null;
+        }
         return array (
             'info' => $order,
             'id' => $order['orderNumber'],
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
             'lastTradeTimestamp' => null,
-            'status' => $order['status'],
+            'status' => $status,
             'symbol' => $symbol,
-            'type' => $order['type'],
-            'side' => $order['side'],
+            'type' => $type,
+            'side' => $side,
             'price' => $price,
             'cost' => $cost,
             'amount' => $amount,
@@ -691,13 +872,12 @@ class poloniex extends Exchange {
         $this->load_markets();
         $method = 'privatePost' . $this->capitalize ($side);
         $market = $this->market ($symbol);
-        $price = floatval ($price);
-        $amount = floatval ($amount);
-        $response = $this->$method (array_merge (array (
+        $request = array (
             'currencyPair' => $market['id'],
             'rate' => $this->price_to_precision($symbol, $price),
             'amount' => $this->amount_to_precision($symbol, $amount),
-        ), $params));
+        );
+        $response = $this->$method (array_merge ($request, $params));
         $timestamp = $this->milliseconds ();
         $order = $this->parse_order(array_merge (array (
             'timestamp' => $timestamp,
@@ -720,7 +900,6 @@ class poloniex extends Exchange {
             'rate' => $this->price_to_precision($symbol, $price),
         );
         if ($amount !== null) {
-            $amount = floatval ($amount);
             $request['amount'] = $this->amount_to_precision($symbol, $amount);
         }
         $response = $this->privatePostMoveOrder (array_merge ($request, $params));
@@ -775,9 +954,42 @@ class poloniex extends Exchange {
         return $response;
     }
 
-    public function fetch_order_status ($id, $symbol = null) {
+    public function fetch_open_order ($id, $symbol = null, $params = array ()) {
         $this->load_markets();
-        $orders = $this->fetch_open_orders($symbol);
+        $id = (string) $id;
+        $response = $this->privatePostReturnOrderStatus (array_merge (array (
+            'orderNumber' => $id,
+        ), $params));
+        //
+        //     {
+        //         success => 1,
+        //         $result => array (
+        //             '6071071' => array (
+        //                 status => 'Open',
+        //                 rate => '0.40000000',
+        //                 amount => '1.00000000',
+        //                 currencyPair => 'BTC_ETH',
+        //                 date => '2018-10-17 17:04:50',
+        //                 total => '0.40000000',
+        //                 type => 'buy',
+        //                 startingAmount => '1.00000',
+        //             ),
+        //         ),
+        //     }
+        //
+        $result = $this->safe_value($response['result'], $id);
+        if ($result === null) {
+            throw new OrderNotFound ($this->id . ' $order $id ' . $id . ' not found');
+        }
+        $order = $this->parse_order($result);
+        $order['id'] = $id;
+        $this->orders[$id] = $order;
+        return $order;
+    }
+
+    public function fetch_order_status ($id, $symbol = null, $params = array ()) {
+        $this->load_markets();
+        $orders = $this->fetch_open_orders($symbol, null, null, $params);
         $indexed = $this->index_by($orders, 'id');
         return (is_array ($indexed) && array_key_exists ($id, $indexed)) ? 'open' : 'closed';
     }
@@ -797,13 +1009,19 @@ class poloniex extends Exchange {
             'currency' => $currency['id'],
         ));
         $address = null;
+        $tag = null;
         if ($response['success'] === 1)
             $address = $this->safe_string($response, 'response');
         $this->check_address($address);
+        $depositAddress = $this->safe_string($currency['info'], 'depositAddress');
+        if ($depositAddress !== null) {
+            $tag = $address;
+            $address = $depositAddress;
+        }
         return array (
             'currency' => $code,
             'address' => $address,
-            'tag' => null,
+            'tag' => $tag,
             'info' => $response,
         );
     }
@@ -814,11 +1032,17 @@ class poloniex extends Exchange {
         $response = $this->privatePostReturnDepositAddresses ();
         $currencyId = $currency['id'];
         $address = $this->safe_string($response, $currencyId);
+        $tag = null;
         $this->check_address($address);
+        $depositAddress = $this->safe_string($currency['info'], 'depositAddress');
+        if ($depositAddress !== null) {
+            $tag = $address;
+            $address = $depositAddress;
+        }
         return array (
             'currency' => $code,
             'address' => $address,
-            'tag' => null,
+            'tag' => $tag,
             'info' => $response,
         );
     }
@@ -838,6 +1062,203 @@ class poloniex extends Exchange {
         return array (
             'info' => $result,
             'id' => $result['response'],
+        );
+    }
+
+    public function fetch_transactions_helper ($code = null, $since = null, $limit = null, $params = array ()) {
+        $this->load_markets();
+        $year = 31104000; // 60 * 60 * 24 * 30 * 12 = one $year of history, why not
+        $now = $this->seconds ();
+        $start = ($since !== null) ? intval ($since / 1000) : $now - 10 * $year;
+        $request = array (
+            'start' => $start, // UNIX timestamp, required
+            'end' => $now, // UNIX timestamp, required
+        );
+        if ($limit !== null)
+            $request['limit'] = $limit;
+        $response = $this->privatePostReturnDepositsWithdrawals (array_merge ($request, $params));
+        //
+        //     {    deposits => array ( array (      currency => "BTC",
+        //                              address => "1MEtiqJWru53FhhHrfJPPvd2tC3TPDVcmW",
+        //                               amount => "0.01063000",
+        //                        confirmations =>  1,
+        //                                 txid => "952b0e1888d6d491591facc0d37b5ebec540ac1efb241fdbc22bcc20d1822fb6",
+        //                            timestamp =>  1507916888,
+        //                               status => "COMPLETE"                                                          ),
+        //                      {      currency => "ETH",
+        //                              address => "0x20108ba20b65c04d82909e91df06618107460197",
+        //                               amount => "4.00000000",
+        //                        confirmations =>  38,
+        //                                 txid => "0x4be260073491fe63935e9e0da42bd71138fdeb803732f41501015a2d46eb479d",
+        //                            timestamp =>  1525060430,
+        //                               status => "COMPLETE"                                                            }  ),
+        //       withdrawals => array ( array ( withdrawalNumber =>  8224394,
+        //                                currency => "EMC2",
+        //                                 address => "EYEKyCrqTNmVCpdDV8w49XvSKRP9N3EUyF",
+        //                                  amount => "63.10796020",
+        //                                     fee => "0.01000000",
+        //                               timestamp =>  1510819838,
+        //                                  status => "COMPLETE => d37354f9d02cb24d98c8c4fc17aa42f475530b5727effdf668ee5a43ce667fd6",
+        //                               ipAddress => "5.220.220.200"                                                               ),
+        //                      array ( withdrawalNumber =>  9290444,
+        //                                currency => "ETH",
+        //                                 address => "0x191015ff2e75261d50433fbd05bd57e942336149",
+        //                                  amount => "0.15500000",
+        //                                     fee => "0.00500000",
+        //                               timestamp =>  1514099289,
+        //                                  status => "COMPLETE => 0x12d444493b4bca668992021fd9e54b5292b8e71d9927af1f076f554e4bea5b2d",
+        //                               ipAddress => "5.228.227.214"                                                                 ),
+        //                      { withdrawalNumber =>  11518260,
+        //                                currency => "BTC",
+        //                                 address => "8JoDXAmE1GY2LRK8jD1gmAmgRPq54kXJ4t",
+        //                                  amount => "0.20000000",
+        //                                     fee => "0.00050000",
+        //                               timestamp =>  1527918155,
+        //                                  status => "COMPLETE => 1864f4ebb277d90b0b1ff53259b36b97fa1990edc7ad2be47c5e0ab41916b5ff",
+        //                               ipAddress => "211.8.195.26"                                                                }    ) }
+        //
+        return $response;
+    }
+
+    public function fetch_transactions ($code = null, $since = null, $limit = null, $params = array ()) {
+        $this->load_markets();
+        $response = $this->fetch_transactions_helper ($code, $since, $limit, $params);
+        for ($i = 0; $i < count ($response['deposits']); $i++) {
+            $response['deposits'][$i]['type'] = 'deposit';
+        }
+        for ($i = 0; $i < count ($response['withdrawals']); $i++) {
+            $response['withdrawals'][$i]['type'] = 'withdrawal';
+        }
+        $currency = null;
+        if ($code !== null) {
+            $currency = $this->currency ($code);
+        }
+        $withdrawals = $this->parseTransactions ($response['withdrawals'], $currency, $since, $limit);
+        $deposits = $this->parseTransactions ($response['deposits'], $currency, $since, $limit);
+        $transactions = $this->array_concat($deposits, $withdrawals);
+        return $this->filterByCurrencySinceLimit ($this->sort_by($transactions, 'timestamp'), $code, $since, $limit);
+    }
+
+    public function fetch_withdrawals ($code = null, $since = null, $limit = null, $params = array ()) {
+        $response = $this->fetch_transactions_helper ($code, $since, $limit, $params);
+        for ($i = 0; $i < count ($response['withdrawals']); $i++) {
+            $response['withdrawals'][$i]['type'] = 'withdrawal';
+        }
+        $currency = null;
+        if ($code !== null) {
+            $currency = $this->currency ($code);
+        }
+        $withdrawals = $this->parseTransactions ($response['withdrawals'], $currency, $since, $limit);
+        return $this->filterByCurrencySinceLimit ($withdrawals, $code, $since, $limit);
+    }
+
+    public function fetch_deposits ($code = null, $since = null, $limit = null, $params = array ()) {
+        $response = $this->fetch_transactions_helper ($code, $since, $limit, $params);
+        for ($i = 0; $i < count ($response['deposits']); $i++) {
+            $response['deposits'][$i]['type'] = 'deposit';
+        }
+        $currency = null;
+        if ($code !== null) {
+            $currency = $this->currency ($code);
+        }
+        $deposits = $this->parseTransactions ($response['deposits'], $currency, $since, $limit);
+        return $this->filterByCurrencySinceLimit ($deposits, $code, $since, $limit);
+    }
+
+    public function parse_transaction_status ($status) {
+        $statuses = array (
+            'COMPLETE' => 'ok',
+        );
+        return $this->safe_string($statuses, $status, $status);
+    }
+
+    public function parse_transaction ($transaction, $currency = null) {
+        //
+        // deposits
+        //
+        //     {
+        //         "$txid" => "f49d489616911db44b740612d19464521179c76ebe9021af85b6de1e2f8d68cd",
+        //         "$type" => "deposit",
+        //         "$amount" => "49798.01987021",
+        //         "$status" => "COMPLETE",
+        //         "$address" => "DJVJZ58tJC8UeUv9Tqcdtn6uhWobouxFLT",
+        //         "$currency" => "DOGE",
+        //         "$timestamp" => 1524321838,
+        //         "confirmations" => 3371,
+        //         "depositNumber" => 134587098
+        //     }
+        //
+        // withdrawals
+        //
+        //     {
+        //         "fee" => "0.00050000",
+        //         "$type" => "withdrawal",
+        //         "$amount" => "0.40234387",
+        //         "$status" => "COMPLETE => fbabb2bf7d81c076f396f3441166d5f60f6cea5fdfe69e02adcc3b27af8c2746",
+        //         "$address" => "1EdAqY4cqHoJGAgNfUFER7yZpg1Jc9DUa3",
+        //         "$currency" => "BTC",
+        //         "canCancel" => 0,
+        //         "ipAddress" => "185.230.101.31",
+        //         "paymentID" => null,
+        //         "$timestamp" => 1523834337,
+        //         "canResendEmail" => 0,
+        //         "withdrawalNumber" => 11162900
+        //     }
+        //
+        $timestamp = $this->safe_integer($transaction, 'timestamp');
+        if ($timestamp !== null) {
+            $timestamp = $timestamp * 1000;
+        }
+        $code = null;
+        $currencyId = $this->safe_string($transaction, 'currency');
+        $currency = $this->safe_value($this->currencies_by_id, $currencyId);
+        if ($currency === null) {
+            $code = $this->common_currency_code($currencyId);
+        }
+        if ($currency !== null) {
+            $code = $currency['code'];
+        }
+        $status = $this->safe_string($transaction, 'status', 'pending');
+        $txid = $this->safe_string($transaction, 'txid');
+        if ($status !== null) {
+            $parts = explode (' => ', $status);
+            $numParts = is_array ($parts) ? count ($parts) : 0;
+            $status = $parts[0];
+            if (($numParts > 1) && ($txid === null)) {
+                $txid = $parts[1];
+            }
+            $status = $this->parse_transaction_status ($status);
+        }
+        $type = $this->safe_string($transaction, 'type');
+        $id = $this->safe_string_2($transaction, 'withdrawalNumber', 'depositNumber');
+        $amount = $this->safe_float($transaction, 'amount');
+        $address = $this->safe_string($transaction, 'address');
+        $feeCost = $this->safe_float($transaction, 'fee');
+        if ($feeCost === null) {
+            // according to https://poloniex.com/fees/
+            $feeCost = 0; // FIXME => remove hardcoded value that may change any time
+        }
+        if ($type === 'withdrawal') {
+            // poloniex withdrawal $amount includes the fee
+            $amount = $amount - $feeCost;
+        }
+        return array (
+            'info' => $transaction,
+            'id' => $id,
+            'currency' => $code,
+            'amount' => $amount,
+            'address' => $address,
+            'tag' => null,
+            'status' => $status,
+            'type' => $type,
+            'updated' => null,
+            'txid' => $txid,
+            'timestamp' => $timestamp,
+            'datetime' => $this->iso8601 ($timestamp),
+            'fee' => array (
+                'currency' => $code,
+                'cost' => $feeCost,
+            ),
         );
     }
 
@@ -863,34 +1284,24 @@ class poloniex extends Exchange {
         return array ( 'url' => $url, 'method' => $method, 'body' => $body, 'headers' => $headers );
     }
 
-    public function handle_errors ($code, $reason, $url, $method, $headers, $body) {
-        $response = null;
-        try {
-            $response = json_decode ($body, $as_associative_array = true);
-        } catch (Exception $e) {
-            // syntax error, resort to default error handler
+    public function handle_errors ($code, $reason, $url, $method, $headers, $body, $response) {
+        if ($response === null) {
             return;
         }
         // array ("error":"Permission denied.")
         if (is_array ($response) && array_key_exists ('error', $response)) {
             $message = $response['error'];
             $feedback = $this->id . ' ' . $this->json ($response);
-            $exceptions = $this->exceptions;
-            if (is_array ($exceptions) && array_key_exists ($message, $exceptions)) {
-                throw new $exceptions[$message] ($feedback);
-            } else if (mb_strpos ($message, 'Total must be at least') !== false) {
-                throw new InvalidOrder ($feedback);
-            } else if (mb_strpos ($message, 'This account is frozen.') !== false) {
-                throw new AccountSuspended ($feedback);
-            } else if (mb_strpos ($message, 'Not enough') !== false) {
-                throw new InsufficientFunds ($feedback);
-            } else if (mb_strpos ($message, 'Nonce must be greater') !== false) {
-                throw new InvalidNonce ($feedback);
-            } else if (mb_strpos ($message, 'You have already called cancelOrder or moveOrder on this order.') !== false) {
-                throw new CancelPending ($feedback);
-            } else {
-                throw new ExchangeError ($this->id . ' unknown error ' . $this->json ($response));
+            $exact = $this->exceptions['exact'];
+            if (is_array ($exact) && array_key_exists ($message, $exact)) {
+                throw new $exact[$message] ($feedback);
             }
+            $broad = $this->exceptions['broad'];
+            $broadKey = $this->findBroadlyMatchedKey ($broad, $message);
+            if ($broadKey !== null) {
+                throw new $broad[$broadKey] ($feedback);
+            }
+            throw new ExchangeError ($feedback); // unknown $message
         }
     }
 }

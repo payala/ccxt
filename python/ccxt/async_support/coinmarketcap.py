@@ -27,6 +27,7 @@ class coinmarketcap (Exchange):
                 'editOrder': False,
                 'fetchBalance': False,
                 'fetchOrderBook': False,
+                'fetchL2OrderBook': False,
                 'fetchOHLCV': False,
                 'fetchTrades': False,
                 'fetchTickers': True,
@@ -98,6 +99,7 @@ class coinmarketcap (Exchange):
             'Bitgem': 'Bitgem',
             'BlazeCoin': 'BlazeCoin',
             'BlockCAT': 'BlockCAT',
+            'Blocktrade Token': 'Blocktrade Token',
             'Catcoin': 'Catcoin',
             'CanYaCoin': 'CanYaCoin',  # conflict with CAN(Content and AD Network)
             'Comet': 'Comet',  # conflict with CMT(CyberMiles)
@@ -114,6 +116,7 @@ class coinmarketcap (Exchange):
             'Global Tour Coin': 'Global Tour Coin',  # conflict with GTC(Game.com)
             'GuccioneCoin': 'GuccioneCoin',  # conflict with GCC(Global Cryptocurrency)
             'HarmonyCoin': 'HarmonyCoin',  # conflict with HMC(Hi Mutual Society)
+            'Harvest Masternode Coin': 'Harvest Masternode Coin',  # conflict with HC(HyperCash)
             'Hydro Protocol': 'Hydro Protocol',  # conflict with HOT(Holo)
             'Huncoin': 'Huncoin',  # conflict with HNC(Helleniccoin)
             'iCoin': 'iCoin',
@@ -132,7 +135,7 @@ class coinmarketcap (Exchange):
             return currencies[name]
         return base
 
-    async def fetch_markets(self):
+    async def fetch_markets(self, params={}):
         markets = await self.publicGetTicker({
             'limit': 0,
         })
@@ -202,8 +205,8 @@ class coinmarketcap (Exchange):
             'close': last,
             'last': last,
             'previousClose': None,
-            'change': change,
-            'percentage': None,
+            'change': None,
+            'percentage': change,
             'average': None,
             'baseVolume': None,
             'quoteVolume': volume,

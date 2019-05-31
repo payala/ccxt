@@ -47,6 +47,7 @@ class lbank (Exchange):
                 'www': 'https://www.lbank.info',
                 'doc': 'https://github.com/LBank-exchange/lbank-official-api-docs',
                 'fees': 'https://lbankinfo.zendesk.com/hc/zh-cn/articles/115002295114--%E8%B4%B9%E7%8E%87%E8%AF%B4%E6%98%8E',
+                'referral': 'https://www.lbank.info/sign-up.html?icode=7QCY&lang=en-US',
             },
             'api': {
                 'public': {
@@ -110,7 +111,7 @@ class lbank (Exchange):
             },
         })
 
-    async def fetch_markets(self):
+    async def fetch_markets(self, params={}):
         markets = await self.publicGetAccuracy()
         result = []
         for i in range(0, len(markets)):
@@ -239,9 +240,12 @@ class lbank (Exchange):
 
     async def fetch_order_book(self, symbol, limit=60, params={}):
         await self.load_markets()
+        size = 60
+        if limit is not None:
+            size = min(limit, size)
         response = await self.publicGetDepth(self.extend({
             'symbol': self.market_id(symbol),
-            'size': min(limit, 60),
+            'size': size,
         }, params))
         return self.parse_order_book(response)
 
@@ -274,7 +278,7 @@ class lbank (Exchange):
             'size': 100,
         }
         if since is not None:
-            request['time'] = int(since / 1000)
+            request['time'] = int(since)
         if limit is not None:
             request['size'] = limit
         response = await self.publicGetTrades(self.extend(request, params))

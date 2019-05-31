@@ -11,7 +11,6 @@ try:
     basestring  # Python 3
 except NameError:
     basestring = str  # Python 2
-import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import InsufficientFunds
@@ -64,6 +63,7 @@ class bitforex (Exchange):
                         'api/v1/fund/mainAccount',
                         'api/v1/fund/allAccount',
                         'api/v1/trade/placeOrder',
+                        'api/v1/trade/placeMultiOrder',
                         'api/v1/trade/cancelOrder',
                         'api/v1/trade/orderInfo',
                         'api/v1/trade/orderInfos',
@@ -74,8 +74,8 @@ class bitforex (Exchange):
                 'trading': {
                     'tierBased': False,
                     'percentage': True,
-                    'maker': 0.0,
-                    'taker': 0.05 / 100,
+                    'maker': 0.1 / 100,
+                    'taker': 0.1 / 100,
                 },
                 'funding': {
                     'tierBased': False,
@@ -227,7 +227,7 @@ class bitforex (Exchange):
             },
         })
 
-    async def fetch_markets(self):
+    async def fetch_markets(self, params={}):
         response = await self.publicGetApiV1MarketSymbols()
         data = response['data']
         result = []
@@ -288,7 +288,7 @@ class bitforex (Exchange):
         if price is not None:
             if amount is not None:
                 cost = amount * price
-        sideId = self.safe_string(trade, 'direction')
+        sideId = self.safe_integer(trade, 'direction')
         side = self.parse_side(sideId)
         return {
             'info': trade,
@@ -386,15 +386,15 @@ class bitforex (Exchange):
         orderbook = self.parse_order_book(data, timestamp, bidsKey, asksKey, priceKey, amountKey)
         return orderbook
 
-    def parse_order_status(self, orderStatusId):
-        if orderStatusId == 0 or orderStatusId == 1:
-            return 'open'
-        elif orderStatusId == 2:
-            return 'closed'
-        elif orderStatusId == 3 or orderStatusId == 4:
-            return 'canceled'
-        else:
-            return None
+    def parse_order_status(self, status):
+        statuses = {
+            '0': 'open',
+            '1': 'open',
+            '2': 'closed',
+            '3': 'canceled',
+            '4': 'canceled',
+        }
+        return statuses[status] if (status in list(statuses.keys())) else status
 
     def parse_side(self, sideId):
         if sideId == 1:
@@ -406,9 +406,8 @@ class bitforex (Exchange):
 
     def parse_order(self, order, market=None):
         id = self.safe_string(order, 'orderId')
-        timestamp = self.safe_float_2(order, 'createTime')
-        iso8601 = self.iso8601(timestamp)
-        lastTradeTimestamp = self.safe_float_2(order, 'lastTime')
+        timestamp = self.safe_float(order, 'createTime')
+        lastTradeTimestamp = self.safe_float(order, 'lastTime')
         symbol = market['symbol']
         sideId = self.safe_integer(order, 'tradeType')
         side = self.parse_side(sideId)
@@ -418,15 +417,19 @@ class bitforex (Exchange):
         amount = self.safe_float(order, 'orderAmount')
         filled = self.safe_float(order, 'dealAmount')
         remaining = amount - filled
-        statusId = self.safe_integer(order, 'orderState')
-        status = self.parse_order_status(statusId)
+        status = self.parse_order_status(self.safe_string(order, 'orderState'))
         cost = filled * price
-        fee = self.safe_float(order, 'tradeFee')
+        feeSide = 'base' if (side == 'buy') else 'quote'
+        feeCurrency = market[feeSide]
+        fee = {
+            'cost': self.safe_float(order, 'tradeFee'),
+            'currency': feeCurrency,
+        }
         result = {
             'info': order,
             'id': id,
             'timestamp': timestamp,
-            'datetime': iso8601,
+            'datetime': self.iso8601(timestamp),
             'lastTradeTimestamp': lastTradeTimestamp,
             'symbol': symbol,
             'type': type,
@@ -526,11 +529,10 @@ class bitforex (Exchange):
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, code, reason, url, method, headers, body):
+    def handle_errors(self, code, reason, url, method, headers, body, response):
         if not isinstance(body, basestring):
             return  # fallback to default error handler
         if (body[0] == '{') or (body[0] == '['):
-            response = json.loads(body)
             feedback = self.id + ' ' + body
             success = self.safe_value(response, 'success')
             if success is not None:
